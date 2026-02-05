@@ -354,6 +354,19 @@ interface ITortoiseV1 {
     /// @param songId The song to lock
     function lockSplits(uint256 songId) external;
 
+    /// @notice Create multiple songs in a single transaction (album upload)
+    /// @param titles Array of song titles (cannot be empty)
+    /// @param prices Array of artist revenue per copy in USDC (0 = use default)
+    /// @param maxSupplies Array of maximum supplies (0 = unlimited)
+    /// @param tokenUris Array of IPFS URIs for metadata
+    /// @return songIds Array of created song IDs
+    function createSongs(
+        string[] calldata titles,
+        uint128[] calldata prices,
+        uint128[] calldata maxSupplies,
+        string[] calldata tokenUris
+    ) external returns (uint256[] memory songIds);
+
     // ============ Minting ============
 
     /// @notice Mint songs using USDC

@@ -1,0 +1,30 @@
+{
+  "name": "tortoise-contract-v1",
+  "version": "1.0.0",
+  "description": "ERC1155 Music NFT Marketplace with USDC payments and revenue splits",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "test:verbose": "forge test -vvv",
+    "test:gas": "forge test --gas-report",
+    "test:fuzz": "forge test --match-path 'test/fuzz/*.t.sol'",
+    "test:invariant": "forge test --match-path 'test/invariant/*.t.sol'",
+    "test:fork": "forge test --match-path 'test/fork/*.t.sol' --fork-url $BASE_RPC_URL",
+    "coverage": "forge coverage",
+    "snapshot": "forge snapshot",
+    "fmt": "forge fmt",
+    "lint": "pnpm solhint 'src/**/*.sol' 'test/**/*.sol'",
+    "deploy:local": "forge script script/Deploy.s.sol --fork-url http://localhost:8545 --broadcast",
+    "deploy:base-sepolia": "forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast --verify",
+    "deploy:base": "forge script script/Deploy.s.sol --rpc-url base --broadcast --verify",
+    "clean": "forge clean && rm -rf cache out"
+  },
+  "devDependencies": {
+    "solhint": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "license": "Apache-2.0"
+}
