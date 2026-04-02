@@ -67,9 +67,9 @@ contract TortoiseShellTest is Test {
         assertEq(shell.tortRewardPerCollection(), TORT_PER_COLLECTION);
     }
 
-    function test_constructor_defaultDuration() public {
-        TortoiseShell s = new TortoiseShell(address(tort), address(usdc), 0);
-        assertEq(s.rewardDuration(), 604_800);
+    function test_constructor_revertsZeroDuration() public {
+        vm.expectRevert("Duration must be positive");
+        new TortoiseShell(address(tort), address(usdc), 0);
     }
 
     function test_constructor_revertsZeroStakingToken() public {
@@ -592,5 +592,68 @@ contract TortoiseShellTest is Test {
         vm.prank(alice);
         shell.stake(STAKE_AMOUNT);
         assertEq(shell.balanceOf(alice), STAKE_AMOUNT);
+    }
+
+    // ============ Issue 2: depositRewards uses balance, not caller amount ============
+
+    function test_depositRewards_usesActualBalance_overreport() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Transfer 50 USDC but claim 200 in depositRewards
+        vm.startPrank(tortoiseV1);
+        usdc.transfer(address(shell), 50e6);
+        shell.depositRewards(200e6); // Amount param ignored
+        vm.stopPrank();
+
+        // Wait full period
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        // Alice should only earn ~50 USDC, not 200
+        uint256 earned = shell.earned(alice) / shell.REWARD_SCALAR();
+        assertApproxEqAbs(earned, 50e6, 100);
+        assertLt(earned, 100e6); // Definitely not 200
+    }
+
+    function test_depositRewards_usesActualBalance_underreport() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Transfer 200 USDC but claim 50 in depositRewards
+        vm.startPrank(tortoiseV1);
+        usdc.transfer(address(shell), 200e6);
+        shell.depositRewards(50e6); // Amount param ignored, full 200 used
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        // Alice should earn ~200 USDC, not 50
+        uint256 earned = shell.earned(alice) / shell.REWARD_SCALAR();
+        assertApproxEqAbs(earned, 200e6, 100);
+        assertGt(earned, 100e6); // Definitely not 50
+    }
+
+    function test_depositRewards_noTransfer_noop() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Call depositRewards without transferring any USDC
+        vm.prank(tortoiseV1);
+        shell.depositRewards(100e6); // No USDC transferred
+
+        // Should be no-op — reward rate stays zero
+        assertEq(shell.rewardRate(), 0);
+    }
+
+    // ============ Issue 3: rewardDuration cannot be zero ============
+
+    function test_updateRewardDuration_revertsZero() public {
+        vm.expectRevert("Duration must be positive");
+        shell.updateRewardDuration(0);
+    }
+
+    function test_constructor_revertsZeroDuration_explicit() public {
+        vm.expectRevert("Duration must be positive");
+        new TortoiseShell(address(tort), address(usdc), 0);
     }
 }

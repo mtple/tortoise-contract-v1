@@ -193,7 +193,7 @@ Buyer calls TortoiseV1.mintSong(songId, quantity, recipient)
   │
   ├─ USDC transferred from buyer to TortoiseV1
   │
-  ├─ 1. Platform Fee (flat)     → Platform fee recipient
+  ├─ 1. Platform Fee (flat)     → Held in contract (owner withdraws via withdrawPlatformFees())
   ├─ 2. Staking Fee (flat)      → TortoiseShell.depositRewards()
   │                                (USDC distributed to all stakers over 7-day drip)
   ├─ 3. Artist Revenue (×qty)   → Split recipients (or artist if no splits)
@@ -226,7 +226,6 @@ struct ContractConfig {
     uint128 defaultSongPrice;
     uint128 platformFee;
     uint128 stakingFee;
-    address platformFeeRecipient;
     address usdcToken;
     address tortoiseShell;   // Can be address(0) to disable shell integration
 }
@@ -339,14 +338,12 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     constructor(
         address _usdcToken,
-        address _platformFeeRecipient,
         uint128 _platformFee,
         uint128 _defaultSongPrice,
         address _tortoiseShell,
         uint128 _stakingFee
     ) ERC1155("") Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
-        require(_platformFeeRecipient != address(0), "Invalid fee recipient");
         require(_platformFee <= MAX_PLATFORM_FEE, "Platform fee exceeds maximum");
         require(_stakingFee <= MAX_STAKING_FEE, "Staking fee exceeds maximum");
 
@@ -354,7 +351,6 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
             defaultSongPrice: _defaultSongPrice == 0 ? DEFAULT_SONG_PRICE : _defaultSongPrice,
             platformFee: _platformFee == 0 ? DEFAULT_PLATFORM_FEE : _platformFee,
             stakingFee: _stakingFee,
-            platformFeeRecipient: _platformFeeRecipient,
             usdcToken: _usdcToken,
             tortoiseShell: _tortoiseShell  // Can be address(0) — shell integration is optional
         });
@@ -442,8 +438,8 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         // 1. Platform fee
         uint256 platformFeeAmount = config.platformFee;
         if (platformFeeAmount > 0) {
-            IERC20(config.usdcToken).safeTransfer(config.platformFeeRecipient, platformFeeAmount);
-            emit PaymentDistributed(songId, config.platformFeeRecipient, platformFeeAmount, true);
+            // Platform fee held in contract — owner withdraws via withdrawPlatformFees()
+            emit PaymentDistributed(songId, address(this), platformFeeAmount, true);
         }
 
         // 2. Staking fee → TortoiseShell
@@ -533,9 +529,10 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         config.defaultSongPrice = newPrice;
     }
 
-    function updatePlatformFeeRecipient(address newRecipient) external onlyOwner {
-        require(newRecipient != address(0), "Invalid recipient");
-        config.platformFeeRecipient = newRecipient;
+    function withdrawPlatformFees() external onlyOwner nonReentrant {
+        uint256 balance = IERC20(config.usdcToken).balanceOf(address(this));
+        require(balance > 0, "No fees to withdraw");
+        IERC20(config.usdcToken).safeTransfer(owner(), balance);
     }
 
     function pause() external onlyOwner { _pause(); }
@@ -721,7 +718,7 @@ function creditStake(address user, uint256 quantity) external onlyAuthorizedCall
    totalCost = ($0.95 × 3) + $0.05 + stakingFee = $2.90 + stakingFee
 
 4. TortoiseV1._distributePayments():
-   a. $0.05 USDC → platform fee recipient
+   a. $0.05 USDC → held in contract (owner withdraws via withdrawPlatformFees())
    b. stakingFee USDC → TortoiseShell
       - safeTransfer USDC to shell
       - call shell.depositRewards(stakingFee)
@@ -780,13 +777,28 @@ All findings from the original v1 security review are addressed in the contract 
 
 **S-3: Staking fee sent but depositRewards not called** — Non-issue. If `depositRewards()` reverts, entire transaction reverts atomically. No USDC can be stranded.
 
-### 4.3 TortoiseShell Security
+### 4.3 Additional Security Fixes
+
+**Issue 1 (High): Shell disabled but staking fee still charged.**
+- `updateTortoiseShell(address(0))` now automatically zeros `stakingFee`.
+- `updateStakingFee` requires `tortoiseShell != address(0)` when setting a non-zero fee.
+- Prevents USDC from being stranded in the contract with no way to recover it.
+
+**Issue 2 (Medium): `depositRewards` trusts caller-provided amount.**
+- `depositRewards` now ignores the `amount` parameter and calculates actual new USDC from `rewardToken.balanceOf(address(this)) - reservedBalance`.
+- Prevents reward accounting from breaking if the transferred amount doesn't match.
+
+**Issue 3 (Medium): `rewardDuration` can be set to zero, bricking deposits.**
+- `updateRewardDuration` and constructor now require `duration > 0`.
+- Prevents division-by-zero in `_addReward`.
+
+### 4.4 TortoiseShell Security
 
 - **Authorized caller pattern:** Only TortoiseV1 and owner can call `depositRewards()` and `creditStake()`. Prevents unauthorized TORT pool drainage.
 - **TORT pool isolation:** `tortPool` is separate from staked balances. Withdrawals pull from `stakedBalance`, not `tortPool`.
 - **Reward snapshot on credit:** `updateReward(user)` runs before balance changes — no retroactive USDC claims.
 - **Graceful degradation:** `creditStake` never reverts on pool depletion.
-- **`reservedBalance`:** Tracks USDC owed to stakers, preventing new deposits from double-counting.
+- **Balance-based reward accounting:** `depositRewards` uses actual USDC balance rather than trusting caller-provided amounts.
 - **ReentrancyGuard:** On all state-changing functions.
 - **SafeERC20:** On all token transfers.
 
@@ -803,6 +815,9 @@ All findings from the original v1 security review are addressed in the contract 
 - [ ] Maximum limits on arrays (splits)
 - [ ] Shell integration uses try/catch
 - [ ] Shell `creditStake` never reverts
+- [ ] Disabling shell auto-zeros staking fee
+- [ ] `depositRewards` uses balance-based accounting, not caller-provided amount
+- [ ] `rewardDuration` cannot be set to zero
 - [ ] `reservedBalance` correctly tracks USDC obligations
 - [ ] TORT pool cannot go negative
 - [ ] `totalStaked` always equals sum of `stakedBalance`
@@ -904,7 +919,6 @@ contract DeployTortoise is Script {
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address platformFeeRecipient = vm.envAddress("PLATFORM_FEE_RECIPIENT");
         uint128 platformFee = uint128(vm.envUint("INITIAL_PLATFORM_FEE"));
         uint128 defaultPrice = uint128(vm.envUint("INITIAL_SONG_PRICE"));
         uint128 stakingFee = uint128(vm.envUint("INITIAL_STAKING_FEE"));
@@ -914,11 +928,11 @@ contract DeployTortoise is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy TortoiseShell
-        TortoiseShell shell = new TortoiseShell(TORT_BASE, usdcAddress);
+        TortoiseShell shell = new TortoiseShell(TORT_BASE, usdcAddress, 604_800);
 
         // 2. Deploy TortoiseV1
         TortoiseV1 tortoise = new TortoiseV1(
-            usdcAddress, platformFeeRecipient, platformFee,
+            usdcAddress, platformFee,
             defaultPrice, address(shell), stakingFee
         );
 

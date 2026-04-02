@@ -201,12 +201,17 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     function updateStakingFee(uint128 newFee) external onlyOwner {
         require(newFee <= MAX_STAKING_FEE, "Fee exceeds maximum");
+        require(newFee == 0 || config.tortoiseShell != address(0), "No shell configured");
         emit StakingFeeUpdated(config.stakingFee, newFee);
         config.stakingFee = newFee;
     }
 
     function updateTortoiseShell(address newShell) external onlyOwner {
         config.tortoiseShell = newShell;
+        if (newShell == address(0) && config.stakingFee > 0) {
+            emit StakingFeeUpdated(config.stakingFee, 0);
+            config.stakingFee = 0;
+        }
     }
 
     function updateDefaultPrice(uint128 newPrice) external onlyOwner {

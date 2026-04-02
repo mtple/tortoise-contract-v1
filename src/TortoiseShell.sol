@@ -98,7 +98,8 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
 
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
-        rewardDuration = _rewardDuration == 0 ? 604_800 : _rewardDuration;
+        require(_rewardDuration > 0, "Duration must be positive");
+        rewardDuration = _rewardDuration;
     }
 
     // ============ User-Facing Functions ============
@@ -147,10 +148,14 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
 
     // ============ Called by TortoiseV1 ============
 
-    function depositRewards(uint256 amount) external onlyAuthorizedCaller updateReward(address(0)) {
-        if (amount == 0) return;
-        _addReward(amount);
-        emit RewardsDeposited(amount, rewardRate);
+    function depositRewards(uint256 /*amount*/) external onlyAuthorizedCaller updateReward(address(0)) {
+        // Calculate actual new USDC from balance rather than trusting caller-provided amount
+        uint256 currentBalance = rewardToken.balanceOf(address(this));
+        uint256 unscaledReserved = reservedBalance / REWARD_SCALAR;
+        uint256 actual = currentBalance > unscaledReserved ? currentBalance - unscaledReserved : 0;
+        if (actual == 0) return;
+        _addReward(actual);
+        emit RewardsDeposited(actual, rewardRate);
     }
 
     function creditStake(
@@ -248,6 +253,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     }
 
     function updateRewardDuration(uint256 newDuration) external onlyOwner {
+        require(newDuration > 0, "Duration must be positive");
         if (block.timestamp < periodFinish) revert RewardPeriodActive();
         emit RewardDurationUpdated(rewardDuration, newDuration);
         rewardDuration = newDuration;

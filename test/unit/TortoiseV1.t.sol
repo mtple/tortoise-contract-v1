@@ -548,12 +548,17 @@ contract TortoiseV1Test is Test {
         // Disable shell by setting to address(0)
         tortoise.updateTortoiseShell(address(0));
 
-        // Verify config actually changed
+        // Verify config actually changed — shell zeroed and staking fee auto-zeroed
         ContractConfig memory cfg = tortoise.getConfig();
         assertEq(cfg.tortoiseShell, address(0));
+        assertEq(cfg.stakingFee, 0);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("No Shell", 0, 0, "ipfs://hash");
+
+        // Buyer pays only artist revenue + platform fee (no staking fee)
+        uint256 expectedCost = uint256(DEFAULT_PRICE) + PLATFORM_FEE;
+        assertEq(tortoise.calculateTotalCost(songId, 1), expectedCost);
 
         uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
         uint256 shellStakedBefore = shell.totalStaked();
@@ -667,5 +672,56 @@ contract TortoiseV1Test is Test {
     function test_calculateTotalCost_revertsNonexistent() public {
         vm.expectRevert("Song does not exist");
         tortoise.calculateTotalCost(999, 1);
+    }
+
+    // ============ Issue 1: Shell disabled zeroes staking fee ============
+
+    function test_disableShell_zerosStakingFee() public {
+        // Staking fee is set in setUp
+        assertGt(tortoise.getConfig().stakingFee, 0);
+
+        // Disable shell
+        tortoise.updateTortoiseShell(address(0));
+
+        // Staking fee should be automatically zeroed
+        assertEq(tortoise.getConfig().stakingFee, 0);
+    }
+
+    function test_updateStakingFee_revertsNoShell() public {
+        // Disable shell first
+        tortoise.updateTortoiseShell(address(0));
+
+        // Try setting non-zero staking fee with no shell
+        vm.expectRevert("No shell configured");
+        tortoise.updateStakingFee(100_000);
+    }
+
+    function test_updateStakingFee_allowsZeroWithNoShell() public {
+        tortoise.updateTortoiseShell(address(0));
+
+        // Setting to zero should work even without shell
+        tortoise.updateStakingFee(0);
+        assertEq(tortoise.getConfig().stakingFee, 0);
+    }
+
+    function test_mintAfterShellDisabled_noStakingFee() public {
+        vm.prank(artist);
+        uint256 songId = tortoise.createSong("No Shell Song", 0, 0, "ipfs://hash");
+
+        // Disable shell (auto-zeros staking fee)
+        tortoise.updateTortoiseShell(address(0));
+
+        uint256 artistBefore = usdc.balanceOf(artist);
+        uint256 buyerBefore = usdc.balanceOf(buyer);
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        // Buyer pays only artist revenue + platform fee (no staking fee)
+        uint256 buyerSpent = buyerBefore - usdc.balanceOf(buyer);
+        assertEq(buyerSpent, uint256(DEFAULT_PRICE) + PLATFORM_FEE);
+
+        // Artist gets full revenue (no staking fee subtracted)
+        assertEq(usdc.balanceOf(artist) - artistBefore, DEFAULT_PRICE);
     }
 }
