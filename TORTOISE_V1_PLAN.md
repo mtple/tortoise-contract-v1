@@ -24,7 +24,7 @@ This document is the single source of truth for the Tortoise v1 system: two cont
 | Feature | v0.3 | v1 |
 |---------|------|------|
 | Payment Token | ETH | USDC |
-| Song Price | Variable (ETH) | Configurable per-song, default $0.95 artist revenue per copy |
+| Song Price | Variable (ETH) | Configurable per-song, default $0.85 artist revenue per copy |
 | Platform Fee | Variable (ETH) | $0.05 flat per transaction (configurable) |
 | Staking Fee | None | Flat per transaction, USDC → TortoiseShell (configurable, TBD) |
 | TORT Credit | None | Fixed TORT per copy collected → collector's staked balance |
@@ -177,9 +177,9 @@ Total Cost = (Artist Revenue per Copy × Quantity) + Platform Fee + Staking Fee
 
 | Component | Type | Default | Recipient |
 |-----------|------|---------|-----------|
-| Artist Revenue | Per copy | $0.95 (950,000 USDC units) | Split recipients (or artist) |
+| Artist Revenue | Per copy | $0.85 (850,000 USDC units) | Split recipients (or artist) |
 | Platform Fee | Flat per tx | $0.05 (50,000 USDC units) | Platform fee recipient |
-| Staking Fee | Flat per tx | TBD | TortoiseShell (USDC rewards) |
+| Staking Fee | Flat per tx | $0.10 (100,000 USDC units) | TortoiseShell (USDC rewards) |
 
 TORT crediting costs the buyer nothing — funded from TortoiseShell's pre-loaded pool.
 
@@ -967,10 +967,10 @@ Step 3: "Stake in new Shell"     → approve() + stake() on TortoiseShell
 
 ## Part 8: Open Questions
 
-- [ ] **Staking fee amount:** Flat per transaction, TBD.
-- [ ] **TORT reward per collection:** Fixed per copy, TBD. Model expected volume against pool budget.
-- [ ] **Initial TORT pool size:** Depends on reward rate and expected collection volume.
-- [ ] **TORT pool refill strategy:** Manual owner deposits? Periodic tortOS job?
+- [x] **Staking fee amount:** $0.10 flat per transaction (100,000 USDC units).
+- [x] **TORT reward per collection:** 777,777 TORT per copy (777_777e18 wei).
+- [x] **Initial TORT pool size:** Manual — owner funds as needed and monitors.
+- [x] **TORT pool refill strategy:** Manual owner deposits via `fundTortPool()`.
 - [ ] **Migration timeline:** 30-day window suggested.
 
 ---

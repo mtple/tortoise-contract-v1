@@ -1,0 +1,596 @@
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity 0.8.30;
+
+import {Test, console} from "forge-std/Test.sol";
+import {TortoiseShell} from "../../src/TortoiseShell.sol";
+import {MockUSDC} from "../mocks/MockUSDC.sol";
+import {MockTORT} from "../mocks/MockTORT.sol";
+
+contract TortoiseShellTest is Test {
+    TortoiseShell public shell;
+    MockUSDC public usdc;
+    MockTORT public tort;
+
+    address public owner = address(this);
+    address public alice = makeAddr("alice");
+    address public bob = makeAddr("bob");
+    address public tortoiseV1 = makeAddr("tortoiseV1");
+
+    uint256 public constant REWARD_DURATION = 604_800; // 7 days
+    uint256 public constant STAKE_AMOUNT = 1000e18;
+    uint256 public constant TORT_PER_COLLECTION = 10e18;
+
+    function setUp() public {
+        usdc = new MockUSDC();
+        tort = new MockTORT();
+        shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
+
+        // Setup authorized caller
+        shell.addAuthorizedCaller(tortoiseV1);
+        shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
+
+        // Fund users with TORT
+        tort.mint(alice, 10_000e18);
+        tort.mint(bob, 10_000e18);
+
+        // Fund shell TORT pool
+        tort.mint(owner, 100_000e18);
+        tort.approve(address(shell), type(uint256).max);
+        shell.fundTortPool(50_000e18);
+
+        // Give tortoiseV1 USDC for reward deposits
+        usdc.mint(tortoiseV1, 1_000_000e6);
+
+        // Approvals
+        vm.prank(alice);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(bob);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(tortoiseV1);
+        usdc.approve(address(shell), type(uint256).max);
+    }
+
+    /// @dev Simulates TortoiseV1 flow: transfer USDC to shell then call depositRewards
+    function _depositRewardsAsV1(uint256 amount) internal {
+        vm.startPrank(tortoiseV1);
+        usdc.transfer(address(shell), amount);
+        shell.depositRewards(amount);
+        vm.stopPrank();
+    }
+
+    // ============ Constructor ============
+
+    function test_constructor() public view {
+        assertEq(address(shell.stakingToken()), address(tort));
+        assertEq(address(shell.rewardToken()), address(usdc));
+        assertEq(shell.rewardDuration(), REWARD_DURATION);
+        assertEq(shell.tortRewardPerCollection(), TORT_PER_COLLECTION);
+    }
+
+    function test_constructor_defaultDuration() public {
+        TortoiseShell s = new TortoiseShell(address(tort), address(usdc), 0);
+        assertEq(s.rewardDuration(), 604_800);
+    }
+
+    function test_constructor_revertsZeroStakingToken() public {
+        vm.expectRevert(TortoiseShell.ZeroAddress.selector);
+        new TortoiseShell(address(0), address(usdc), REWARD_DURATION);
+    }
+
+    function test_constructor_revertsZeroRewardToken() public {
+        vm.expectRevert(TortoiseShell.ZeroAddress.selector);
+        new TortoiseShell(address(tort), address(0), REWARD_DURATION);
+    }
+
+    // ============ Stake ============
+
+    function test_stake() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        assertEq(shell.stakedBalance(alice), STAKE_AMOUNT);
+        assertEq(shell.totalStaked(), STAKE_AMOUNT);
+        assertEq(tort.balanceOf(address(shell)), 50_000e18 + STAKE_AMOUNT);
+    }
+
+    function test_stake_revertsZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.ZeroAmount.selector);
+        shell.stake(0);
+    }
+
+    function test_stake_revertsWhenPaused() public {
+        shell.pause();
+        vm.prank(alice);
+        vm.expectRevert();
+        shell.stake(STAKE_AMOUNT);
+    }
+
+    // ============ Withdraw ============
+
+    function test_withdraw() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 tortBefore = tort.balanceOf(alice);
+
+        vm.prank(alice);
+        shell.withdraw(STAKE_AMOUNT);
+
+        assertEq(shell.stakedBalance(alice), 0);
+        assertEq(shell.totalStaked(), 0);
+        assertEq(tort.balanceOf(alice), tortBefore + STAKE_AMOUNT);
+    }
+
+    function test_withdraw_partial() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        vm.prank(alice);
+        shell.withdraw(STAKE_AMOUNT / 2);
+
+        assertEq(shell.stakedBalance(alice), STAKE_AMOUNT / 2);
+    }
+
+    function test_withdraw_revertsZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.ZeroAmount.selector);
+        shell.withdraw(0);
+    }
+
+    function test_withdraw_revertsInsufficientBalance() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.InsufficientBalance.selector);
+        shell.withdraw(STAKE_AMOUNT);
+    }
+
+    function test_withdraw_allowedWhenPaused() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        shell.pause();
+
+        vm.prank(alice);
+        shell.withdraw(STAKE_AMOUNT); // Should succeed
+        assertEq(shell.stakedBalance(alice), 0);
+    }
+
+    // ============ USDC Reward Drip ============
+
+    function test_depositRewards_startsRewardPeriod() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
+        uint256 rewardAmount = 100e6; // 100 USDC
+        _depositRewardsAsV1(rewardAmount);
+
+        assertGt(shell.rewardRate(), 0);
+        assertEq(shell.periodFinish(), block.timestamp + REWARD_DURATION);
+        // Verify USDC actually arrived in the shell
+        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore + rewardAmount);
+        // Verify reservedBalance tracks the deposit (scaled)
+        assertEq(shell.reservedBalance(), rewardAmount * shell.REWARD_SCALAR());
+    }
+
+    function test_depositRewards_zeroAmount() public {
+        // Deposit a real reward first to set non-zero state
+        _depositRewardsAsV1(100e6);
+        uint256 rateBefore = shell.rewardRate();
+        uint256 periodBefore = shell.periodFinish();
+
+        // Zero deposit should not change reward state
+        vm.prank(tortoiseV1);
+        shell.depositRewards(0);
+        assertEq(shell.rewardRate(), rateBefore);
+        assertEq(shell.periodFinish(), periodBefore);
+    }
+
+    function test_claimRewards_afterFullPeriod() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 700e6; // 700 USDC
+        _depositRewardsAsV1(rewardAmount);
+
+        // Fast-forward past reward period
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        uint256 balBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        shell.claimRewards();
+        uint256 balAfter = usdc.balanceOf(alice);
+
+        // Should receive ~700 USDC (minus rounding dust from integer division)
+        uint256 claimed = balAfter - balBefore;
+        assertApproxEqAbs(claimed, rewardAmount, 100); // tolerance: 0.0001 USDC
+        assertGt(claimed, 0); // must actually receive something
+    }
+
+    function test_claimRewards_proportional() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        vm.prank(bob);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 700e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        vm.prank(alice);
+        shell.claimRewards();
+        vm.prank(bob);
+        shell.claimRewards();
+
+        // Each should get ~350 USDC
+        uint256 aliceBal = usdc.balanceOf(alice);
+        uint256 bobBal = usdc.balanceOf(bob);
+        assertApproxEqAbs(aliceBal, 350e6, 100);
+        assertApproxEqAbs(bobBal, 350e6, 100);
+        // Total distributed should equal total deposited (minus rounding)
+        assertApproxEqAbs(aliceBal + bobBal, 700e6, 200);
+        assertGt(aliceBal, 0);
+        assertGt(bobBal, 0);
+    }
+
+    function test_claimRewards_partialPeriod() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 700e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        // Fast-forward half the period
+        vm.warp(block.timestamp + REWARD_DURATION / 2);
+
+        uint256 balBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        shell.claimRewards();
+        uint256 balAfter = usdc.balanceOf(alice);
+
+        // Should receive ~350 USDC (half the reward)
+        uint256 claimed = balAfter - balBefore;
+        assertApproxEqAbs(claimed, 350e6, 100);
+        assertGt(claimed, 0);
+        // Should be strictly less than full amount
+        assertLt(claimed, 700e6);
+    }
+
+    function test_claimRewards_revertsWhenPaused() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 100e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        vm.warp(block.timestamp + REWARD_DURATION);
+
+        shell.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        shell.claimRewards();
+    }
+
+    function test_overlappingDeposits() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // First deposit
+        _depositRewardsAsV1(100e6);
+
+        // Halfway through, second deposit
+        vm.warp(block.timestamp + REWARD_DURATION / 2);
+        _depositRewardsAsV1(100e6);
+
+        // Fast-forward past second period
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        vm.prank(alice);
+        shell.claimRewards();
+
+        // Should receive ~200 USDC total (minus rounding)
+        uint256 claimed = usdc.balanceOf(alice);
+        assertApproxEqAbs(claimed, 200e6, 100);
+        assertGt(claimed, 100e6); // Must be more than single deposit
+    }
+
+    // ============ Exit ============
+
+    function test_exit() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 100e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        vm.prank(alice);
+        shell.exit();
+
+        assertEq(shell.stakedBalance(alice), 0);
+        assertEq(shell.totalStaked(), 0);
+        assertEq(tort.balanceOf(alice), 10_000e18); // Got all TORT back
+        uint256 usdcClaimed = usdc.balanceOf(alice);
+        assertApproxEqAbs(usdcClaimed, rewardAmount, 100);
+        assertGt(usdcClaimed, 0);
+    }
+
+    // ============ Emergency Withdraw ============
+
+    function test_emergencyWithdraw() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 100e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        vm.warp(block.timestamp + REWARD_DURATION / 2);
+
+        vm.prank(alice);
+        shell.emergencyWithdraw();
+
+        assertEq(shell.stakedBalance(alice), 0);
+        assertEq(shell.totalStaked(), 0);
+        assertEq(tort.balanceOf(alice), 10_000e18); // Got TORT back
+        assertEq(usdc.balanceOf(alice), 0); // Forfeited USDC
+    }
+
+    function test_emergencyWithdraw_revertsZeroBalance() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.ZeroAmount.selector);
+        shell.emergencyWithdraw();
+    }
+
+    function test_emergencyWithdraw_allowedWhenPaused() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        shell.pause();
+
+        uint256 tortBefore = tort.balanceOf(alice);
+        vm.prank(alice);
+        shell.emergencyWithdraw(); // Should succeed
+        assertEq(shell.stakedBalance(alice), 0);
+        assertEq(tort.balanceOf(alice), tortBefore + STAKE_AMOUNT);
+    }
+
+    // ============ Credit Stake ============
+
+    function test_creditStake() public {
+        vm.prank(tortoiseV1);
+        shell.creditStake(alice, 3);
+
+        assertEq(shell.stakedBalance(alice), 3 * TORT_PER_COLLECTION);
+        assertEq(shell.totalStaked(), 3 * TORT_PER_COLLECTION);
+        assertEq(shell.totalTortCredited(), 3 * TORT_PER_COLLECTION);
+    }
+
+    function test_creditStake_partialPool() public {
+        // Withdraw most of the pool
+        shell.withdrawTortPool(49_990e18);
+        // 10e18 left in pool
+
+        vm.prank(tortoiseV1);
+        shell.creditStake(alice, 3); // Wants 30e18 but only 10e18 available
+
+        assertEq(shell.stakedBalance(alice), 10e18);
+        assertEq(shell.tortPool(), 0);
+    }
+
+    function test_creditStake_emptyPool() public {
+        shell.withdrawTortPool(50_000e18);
+        assertEq(shell.tortPool(), 0);
+
+        vm.prank(tortoiseV1);
+        shell.creditStake(alice, 3); // No-op
+
+        assertEq(shell.stakedBalance(alice), 0);
+        assertEq(shell.totalStaked(), 0);
+        assertEq(shell.totalTortCredited(), 0); // Nothing was credited
+        assertEq(shell.tortPool(), 0); // Pool unchanged
+    }
+
+    function test_creditStake_noRetroactiveRewards() public {
+        // Alice stakes directly
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Deposit rewards
+        _depositRewardsAsV1(700e6);
+
+        // Half period passes
+        vm.warp(block.timestamp + REWARD_DURATION / 2);
+
+        // Bob gets credited mid-period
+        vm.prank(tortoiseV1);
+        shell.creditStake(bob, 100); // 1000e18 TORT credited
+
+        // Full period
+        vm.warp(block.timestamp + REWARD_DURATION);
+
+        uint256 aliceEarned = shell.earned(alice);
+        uint256 bobEarned = shell.earned(bob);
+
+        // Alice earned for full period, Bob only for second half
+        assertGt(aliceEarned, bobEarned);
+    }
+
+    function test_creditStake_allowedWhenPaused() public {
+        shell.pause();
+
+        vm.prank(tortoiseV1);
+        shell.creditStake(alice, 1); // Should succeed
+
+        assertEq(shell.stakedBalance(alice), TORT_PER_COLLECTION);
+    }
+
+    function test_creditStake_revertsUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.UnauthorizedCaller.selector);
+        shell.creditStake(bob, 1);
+    }
+
+    // ============ Deposit Rewards ============
+
+    function test_depositRewards_revertsUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(TortoiseShell.UnauthorizedCaller.selector);
+        shell.depositRewards(100e6);
+    }
+
+    function test_depositRewards_allowedWhenPaused() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        shell.pause();
+
+        _depositRewardsAsV1(100e6); // Should succeed
+        assertGt(shell.rewardRate(), 0);
+    }
+
+    // ============ TORT Pool Management ============
+
+    function test_fundTortPool() public {
+        uint256 poolBefore = shell.tortPool();
+        tort.mint(owner, 10_000e18);
+        shell.fundTortPool(10_000e18);
+        assertEq(shell.tortPool(), poolBefore + 10_000e18);
+    }
+
+    function test_fundTortPool_revertsZero() public {
+        vm.expectRevert(TortoiseShell.ZeroAmount.selector);
+        shell.fundTortPool(0);
+    }
+
+    function test_withdrawTortPool() public {
+        uint256 poolBefore = shell.tortPool();
+        shell.withdrawTortPool(1_000e18);
+        assertEq(shell.tortPool(), poolBefore - 1_000e18);
+    }
+
+    function test_withdrawTortPool_revertsInsufficientPool() public {
+        vm.expectRevert(TortoiseShell.InsufficientTortPool.selector);
+        shell.withdrawTortPool(100_000e18);
+    }
+
+    function test_setTortRewardPerCollection() public {
+        shell.setTortRewardPerCollection(20e18);
+        assertEq(shell.tortRewardPerCollection(), 20e18);
+
+        // Verify the new value actually affects creditStake behavior
+        vm.prank(tortoiseV1);
+        shell.creditStake(alice, 1);
+        assertEq(shell.stakedBalance(alice), 20e18); // 1 * 20e18, not 1 * 10e18
+    }
+
+    // ============ Access Control ============
+
+    function test_addAuthorizedCaller() public {
+        address newCaller = makeAddr("newCaller");
+        shell.addAuthorizedCaller(newCaller);
+        assertTrue(shell.authorizedCallers(newCaller));
+    }
+
+    function test_addAuthorizedCaller_revertsZeroAddress() public {
+        vm.expectRevert(TortoiseShell.ZeroAddress.selector);
+        shell.addAuthorizedCaller(address(0));
+    }
+
+    function test_removeAuthorizedCaller() public {
+        shell.removeAuthorizedCaller(tortoiseV1);
+        assertFalse(shell.authorizedCallers(tortoiseV1));
+    }
+
+    function test_ownerCanCallAuthorizedFunctions() public {
+        // Owner should be able to call authorized functions even though not in authorizedCallers mapping
+        assertFalse(shell.authorizedCallers(owner));
+
+        // Fund shell with USDC so depositRewards has real effect
+        usdc.mint(address(shell), 100e6);
+        shell.depositRewards(100e6);
+        assertGt(shell.rewardRate(), 0);
+
+        // Owner can also creditStake
+        shell.creditStake(alice, 1);
+        assertEq(shell.stakedBalance(alice), TORT_PER_COLLECTION);
+    }
+
+    function test_adminFunctions_revertNonOwner() public {
+        vm.startPrank(alice);
+        vm.expectRevert();
+        shell.addAuthorizedCaller(alice);
+        vm.expectRevert();
+        shell.removeAuthorizedCaller(tortoiseV1);
+        vm.expectRevert();
+        shell.setTortRewardPerCollection(0);
+        vm.expectRevert();
+        shell.fundTortPool(1);
+        vm.expectRevert();
+        shell.withdrawTortPool(1);
+        vm.expectRevert();
+        shell.updateRewardDuration(1);
+        vm.expectRevert();
+        shell.pause();
+        vm.expectRevert();
+        shell.recoverTokens(address(0), 0);
+        vm.stopPrank();
+    }
+
+    // ============ Reward Duration ============
+
+    function test_updateRewardDuration() public {
+        shell.updateRewardDuration(14 days);
+        assertEq(shell.rewardDuration(), 14 days);
+    }
+
+    function test_updateRewardDuration_revertsActivePeriod() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        _depositRewardsAsV1(100e6);
+
+        vm.expectRevert(TortoiseShell.RewardPeriodActive.selector);
+        shell.updateRewardDuration(14 days);
+    }
+
+    // ============ Pause ============
+
+    function test_pause_unpause() public {
+        shell.pause();
+        assertTrue(shell.paused());
+        shell.unpause();
+        assertFalse(shell.paused());
+    }
+
+    // ============ Recover Tokens ============
+
+    function test_recoverTokens_blocksStakingToken() public {
+        vm.expectRevert("Cannot recover staking token");
+        shell.recoverTokens(address(tort), 1);
+    }
+
+    function test_recoverTokens_blocksRewardToken() public {
+        vm.expectRevert("Cannot recover reward token");
+        shell.recoverTokens(address(usdc), 1);
+    }
+
+    // ============ View Functions ============
+
+    function test_getUserStats() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        vm.prank(bob);
+        shell.stake(STAKE_AMOUNT);
+
+        (uint256 stakedAmount, uint256 pendingRewards, uint256 share) = shell.getUserStats(alice);
+        assertEq(stakedAmount, STAKE_AMOUNT);
+        assertEq(pendingRewards, 0);
+        assertEq(share, 0.5e18); // 50%
+    }
+
+    function test_balanceOf() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+        assertEq(shell.balanceOf(alice), STAKE_AMOUNT);
+    }
+}
