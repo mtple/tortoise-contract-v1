@@ -81,8 +81,8 @@ contract TortoiseV1ForkTest is Test {
         assertEq(IERC20(USDC).balanceOf(address(tortoise)) - contractUsdcBefore, PLATFORM_FEE);
         assertEq(IERC20(USDC).balanceOf(address(shell)) - shellUsdcBefore, STAKING_FEE);
 
-        // No USDC left in tortoise
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)), 0);
+        // Only platform fee held in tortoise
+        assertEq(IERC20(USDC).balanceOf(address(tortoise)), PLATFORM_FEE);
 
         // Verify TORT crediting
         assertEq(shell.stakedBalance(buyer), 3 * TORT_PER_COLLECTION);
@@ -147,7 +147,8 @@ contract TortoiseV1ForkTest is Test {
 
         assertEq(IERC20(USDC).balanceOf(artist), expectedArtist);
         assertEq(IERC20(USDC).balanceOf(collab), expectedCollab);
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)), 0);
+        // Only platform fee held in contract
+        assertEq(IERC20(USDC).balanceOf(address(tortoise)), PLATFORM_FEE);
     }
 
     /// @dev Full lifecycle: stake TORT → collect song → earn USDC → exit

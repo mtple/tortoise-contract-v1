@@ -92,6 +92,18 @@ contract TortoiseV1Test is Test {
         new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), 2_000_000);
     }
 
+    function test_constructor_revertsStakingFeeWithoutShell() public {
+        vm.expectRevert("No shell configured");
+        new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(0), STAKING_FEE);
+    }
+
+    function test_constructor_allowsZeroStakingFeeWithoutShell() public {
+        TortoiseV1 t = new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(0), 0);
+        ContractConfig memory cfg = t.getConfig();
+        assertEq(cfg.tortoiseShell, address(0));
+        assertEq(cfg.stakingFee, 0);
+    }
+
     function test_nameAndSymbol() public view {
         assertEq(tortoise.name(), "Tortoise");
         assertEq(tortoise.symbol(), "TORT");

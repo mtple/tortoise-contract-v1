@@ -76,6 +76,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         require(_usdcToken != address(0), "Invalid USDC address");
         require(_platformFee <= MAX_PLATFORM_FEE, "Platform fee exceeds maximum");
         require(_stakingFee <= MAX_STAKING_FEE, "Staking fee exceeds maximum");
+        require(_stakingFee == 0 || _tortoiseShell != address(0), "No shell configured");
 
         config = ContractConfig({
             defaultSongPrice: _defaultSongPrice == 0 ? DEFAULT_SONG_PRICE : _defaultSongPrice,

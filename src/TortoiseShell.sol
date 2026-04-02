@@ -127,11 +127,11 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         _claimRewards(msg.sender);
     }
 
-    function emergencyWithdraw() external nonReentrant {
+    function emergencyWithdraw() external nonReentrant updateReward(msg.sender) {
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit unclaimed USDC rewards
+        // Forfeit all accrued USDC rewards, including rewards since the last checkpoint.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
