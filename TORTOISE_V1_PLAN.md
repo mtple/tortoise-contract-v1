@@ -11,11 +11,11 @@ This document is the single source of truth for the Tortoise v1 system: two cont
 
 **Build** — Two contracts, one repo. TortoiseV1 handles song creation, minting, USDC payments, and revenue splits. TortoiseShell handles staking, USDC reward distribution (7-day drip), and TORT crediting from a pre-funded pool. Full test suites for both.
 
-**Deploy** — TortoiseShell first, then TortoiseV1 with the shell address. Register V1 as an authorized caller on the shell. Fund the TORT pool. Set fees.
+**Deploy** — TortoiseShell first, then TortoiseV1 with the shell address. Register V1 as an authorized caller on the shell. Fund the TORT pool. Set fees. Platform fees accumulate in the TortoiseV1 contract and are withdrawn by the owner via `withdrawPlatformFees()`.
 
 **Migrate** — Users move $TORT from old Staker/FeePool (WETH rewards) to TortoiseShell (USDC rewards). Artists re-create songs on V1. Old contracts stay accessible but dormant.
 
-**Live** — Someone collects a song. USDC splits three ways: platform fee, staking fee (dripped to all stakers), artist revenue (to split recipients). TORT from the shell's pool is credited into the collector's staked balance, growing their share of future rewards. The flywheel runs.
+**Live** — Someone collects a song. USDC splits three ways: platform fee (held in contract for owner withdrawal), staking fee (dripped to all stakers), artist revenue (to split recipients). TORT from the shell's pool is credited into the collector's staked balance, growing their share of future rewards. The flywheel runs.
 
 ---
 
@@ -178,13 +178,13 @@ Total Cost = (Artist Revenue per Copy × Quantity) + Platform Fee + Staking Fee
 | Component | Type | Default | Recipient |
 |-----------|------|---------|-----------|
 | Artist Revenue | Per copy | $0.85 (850,000 USDC units) | Split recipients (or artist) |
-| Platform Fee | Flat per tx | $0.05 (50,000 USDC units) | Platform fee recipient |
+| Platform Fee | Flat per tx | $0.05 (50,000 USDC units) | Held in contract, withdrawn by owner |
 | Staking Fee | Flat per tx | $0.10 (100,000 USDC units) | TortoiseShell (USDC rewards) |
 
 TORT crediting costs the buyer nothing — funded from TortoiseShell's pre-loaded pool.
 
-**Single mint example:** $0.95 + $0.05 + staking fee = ~$1.00 + staking fee
-**5-copy mint example:** ($0.95 × 5) + $0.05 + staking fee = $4.80 + staking fee
+**Single mint example:** $0.85 + $0.05 + $0.10 = $1.00
+**5-copy mint example:** ($0.85 × 5) + $0.05 + $0.10 = $4.40
 
 ### 1.5 Mint Flow
 
@@ -888,7 +888,7 @@ Against real USDC and TORT on Base fork:
 
 ```
 1. Deploy TortoiseShell (TORT address, USDC address, rewardDuration=604800)
-2. Deploy TortoiseV1 (USDC, platformFeeRecipient, fees, TortoiseShell address)
+2. Deploy TortoiseV1 (USDC, fees, TortoiseShell address)
 3. Register TortoiseV1 as authorized caller on TortoiseShell
 4. Fund TortoiseShell TORT pool via fundTortPool()
 5. Set tortRewardPerCollection on TortoiseShell

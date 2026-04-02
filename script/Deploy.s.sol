@@ -9,7 +9,6 @@ import {Config} from "./helpers/Config.s.sol";
 contract DeployTortoise is Config {
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address platformFeeRecipient = vm.envAddress("PLATFORM_FEE_RECIPIENT");
         uint128 platformFee = uint128(vm.envUint("INITIAL_PLATFORM_FEE"));
         uint128 defaultPrice = uint128(vm.envUint("INITIAL_SONG_PRICE"));
         uint128 stakingFee = uint128(vm.envUint("INITIAL_STAKING_FEE"));
@@ -25,7 +24,7 @@ contract DeployTortoise is Config {
 
         // 2. Deploy TortoiseV1
         TortoiseV1 tortoise = new TortoiseV1(
-            usdcAddress, platformFeeRecipient, platformFee, defaultPrice, address(shell), stakingFee
+            usdcAddress, platformFee, defaultPrice, address(shell), stakingFee
         );
         console.log("TortoiseV1 deployed at:", address(tortoise));
 

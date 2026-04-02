@@ -22,7 +22,6 @@ contract TortoiseV1InvariantTest is Test {
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
         tortoise = new TortoiseV1(
             address(usdc),
-            makeAddr("platform"),
             50_000,
             850_000,
             address(shell),
@@ -41,12 +40,15 @@ contract TortoiseV1InvariantTest is Test {
         targetContract(address(handler));
     }
 
-    /// @dev Invariant: TortoiseV1 should never hold USDC after any operation
-    function invariant_noUsdcInContract() public view {
+    /// @dev Invariant: TortoiseV1 USDC balance should only contain accumulated platform fees
+    ///      (platformFee per mint * number of mints)
+    function invariant_onlyPlatformFeesInContract() public view {
+        uint256 contractBalance = usdc.balanceOf(address(tortoise));
+        uint256 expectedFees = handler.totalMints() * 50_000; // PLATFORM_FEE per mint
         assertEq(
-            usdc.balanceOf(address(tortoise)),
-            0,
-            "USDC stranded in TortoiseV1"
+            contractBalance,
+            expectedFees,
+            "Contract USDC != accumulated platform fees"
         );
     }
 

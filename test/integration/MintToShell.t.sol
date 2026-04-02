@@ -19,7 +19,6 @@ contract MintToShellTest is Test {
     address public buyer1 = makeAddr("buyer1");
     address public buyer2 = makeAddr("buyer2");
     address public staker = makeAddr("staker");
-    address public platformRecipient = makeAddr("platformRecipient");
 
     uint128 constant PLATFORM_FEE = 50_000;
     uint128 constant STAKING_FEE = 100_000;
@@ -33,7 +32,7 @@ contract MintToShellTest is Test {
 
         shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
         tortoise = new TortoiseV1(
-            address(usdc), platformRecipient, PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
+            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
         );
 
         shell.addAuthorizedCaller(address(tortoise));
@@ -144,16 +143,16 @@ contract MintToShellTest is Test {
         tortoise.mintSong(songId, 2, buyer1);
 
         uint256 totalCost = buyer1Before - usdc.balanceOf(buyer1);
-        uint256 platformGot = usdc.balanceOf(platformRecipient);
+        uint256 platformHeld = usdc.balanceOf(address(tortoise)); // Held in contract
         uint256 artistGot = usdc.balanceOf(artist);
         uint256 collabGot = usdc.balanceOf(makeAddr("collab"));
         uint256 shellGot = usdc.balanceOf(address(shell));
 
         // Total cost should equal sum of all distributions
-        assertEq(totalCost, platformGot + artistGot + collabGot + shellGot);
+        assertEq(totalCost, platformHeld + artistGot + collabGot + shellGot);
 
-        // No USDC left in tortoise contract
-        assertEq(usdc.balanceOf(address(tortoise)), 0);
+        // Platform fee held in contract
+        assertEq(platformHeld, PLATFORM_FEE);
     }
 
     function test_shellCreditFailure_mintStillSucceeds() public {

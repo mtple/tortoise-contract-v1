@@ -62,19 +62,18 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     event PlatformFeeUpdated(uint128 oldFee, uint128 newFee);
     event StakingFeeUpdated(uint128 oldFee, uint128 newFee);
     event DefaultPriceUpdated(uint128 oldPrice, uint128 newPrice);
+    event PlatformFeesWithdrawn(address indexed to, uint256 amount);
 
     // ============ Constructor ============
 
     constructor(
         address _usdcToken,
-        address _platformFeeRecipient,
         uint128 _platformFee,
         uint128 _defaultSongPrice,
         address _tortoiseShell,
         uint128 _stakingFee
     ) ERC1155("") Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
-        require(_platformFeeRecipient != address(0), "Invalid fee recipient");
         require(_platformFee <= MAX_PLATFORM_FEE, "Platform fee exceeds maximum");
         require(_stakingFee <= MAX_STAKING_FEE, "Staking fee exceeds maximum");
 
@@ -82,7 +81,6 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
             defaultSongPrice: _defaultSongPrice == 0 ? DEFAULT_SONG_PRICE : _defaultSongPrice,
             platformFee: _platformFee == 0 ? DEFAULT_PLATFORM_FEE : _platformFee,
             stakingFee: _stakingFee,
-            platformFeeRecipient: _platformFeeRecipient,
             usdcToken: _usdcToken,
             tortoiseShell: _tortoiseShell // Can be address(0) — shell integration is optional
         });
@@ -217,9 +215,11 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         config.defaultSongPrice = newPrice;
     }
 
-    function updatePlatformFeeRecipient(address newRecipient) external onlyOwner {
-        require(newRecipient != address(0), "Invalid recipient");
-        config.platformFeeRecipient = newRecipient;
+    function withdrawPlatformFees() external onlyOwner nonReentrant {
+        uint256 balance = IERC20(config.usdcToken).balanceOf(address(this));
+        require(balance > 0, "No fees to withdraw");
+        IERC20(config.usdcToken).safeTransfer(owner(), balance);
+        emit PlatformFeesWithdrawn(owner(), balance);
     }
 
     function pause() external onlyOwner {
@@ -274,13 +274,10 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     ) internal {
         Song storage song = songs[songId];
 
-        // 1. Platform fee
+        // 1. Platform fee — held in contract, withdrawn by owner
         uint256 platformFeeAmount = config.platformFee;
         if (platformFeeAmount > 0) {
-            IERC20(config.usdcToken).safeTransfer(config.platformFeeRecipient, platformFeeAmount);
-            emit PaymentDistributed(
-                songId, config.platformFeeRecipient, platformFeeAmount, true
-            );
+            emit PaymentDistributed(songId, address(this), platformFeeAmount, true);
         }
 
         // 2. Staking fee -> TortoiseShell

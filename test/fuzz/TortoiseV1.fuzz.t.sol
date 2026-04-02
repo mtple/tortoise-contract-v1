@@ -18,7 +18,6 @@ contract TortoiseV1FuzzTest is Test {
     address public owner = address(this);
     address public artist = makeAddr("artist");
     address public buyer = makeAddr("buyer");
-    address public platformRecipient = makeAddr("platformRecipient");
 
     uint128 constant PLATFORM_FEE = 50_000;
     uint128 constant STAKING_FEE = 100_000;
@@ -30,7 +29,6 @@ contract TortoiseV1FuzzTest is Test {
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
         tortoise = new TortoiseV1(
             address(usdc),
-            platformRecipient,
             PLATFORM_FEE,
             DEFAULT_PRICE,
             address(shell),
@@ -51,8 +49,8 @@ contract TortoiseV1FuzzTest is Test {
         usdc.approve(address(tortoise), type(uint256).max);
     }
 
-    /// @dev Fuzz: mint with random quantity, verify no USDC left in contract
-    function testFuzz_mintSong_noUsdcLeftInContract(uint256 quantity) public {
+    /// @dev Fuzz: mint with random quantity, verify only platform fees remain in contract
+    function testFuzz_mintSong_onlyPlatformFeeInContract(uint256 quantity) public {
         quantity = bound(quantity, 1, 1_000);
 
         vm.prank(artist);
@@ -61,7 +59,7 @@ contract TortoiseV1FuzzTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, quantity, buyer);
 
-        assertEq(usdc.balanceOf(address(tortoise)), 0, "USDC stranded in contract");
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
     }
 
     /// @dev Fuzz: mint with random price, verify payment sums
@@ -74,7 +72,7 @@ contract TortoiseV1FuzzTest is Test {
 
         uint256 buyerBefore = usdc.balanceOf(buyer);
         uint256 artistBefore = usdc.balanceOf(artist);
-        uint256 platformBefore = usdc.balanceOf(platformRecipient);
+        uint256 contractBefore = usdc.balanceOf(address(tortoise));
         uint256 shellBefore = usdc.balanceOf(address(shell));
 
         vm.prank(buyer);
@@ -82,17 +80,15 @@ contract TortoiseV1FuzzTest is Test {
 
         uint256 buyerSpent = buyerBefore - usdc.balanceOf(buyer);
         uint256 artistGot = usdc.balanceOf(artist) - artistBefore;
-        uint256 platformGot = usdc.balanceOf(platformRecipient) - platformBefore;
+        uint256 platformHeld = usdc.balanceOf(address(tortoise)) - contractBefore;
         uint256 shellGot = usdc.balanceOf(address(shell)) - shellBefore;
 
         // Total spent == sum of all distributions
-        assertEq(buyerSpent, artistGot + platformGot + shellGot, "Payment sum mismatch");
-        // No USDC in contract
-        assertEq(usdc.balanceOf(address(tortoise)), 0, "USDC stranded");
+        assertEq(buyerSpent, artistGot + platformHeld + shellGot, "Payment sum mismatch");
         // Artist revenue matches expected
         assertEq(artistGot, uint256(price) * quantity, "Artist revenue wrong");
         // Fees are flat
-        assertEq(platformGot, PLATFORM_FEE, "Platform fee wrong");
+        assertEq(platformHeld, PLATFORM_FEE, "Platform fee wrong");
         assertEq(shellGot, STAKING_FEE, "Staking fee wrong");
     }
 
@@ -127,7 +123,7 @@ contract TortoiseV1FuzzTest is Test {
 
         // Split recipients receive exactly the artist revenue
         assertEq(artistGot + collabGot, artistRevenue, "Split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), 0, "USDC stranded");
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
     }
 
     /// @dev Fuzz: random N-way splits (2-10 recipients) sum correctly
@@ -174,7 +170,7 @@ contract TortoiseV1FuzzTest is Test {
         }
 
         assertEq(totalDistributed, artistRevenue, "Multi-split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), 0, "USDC stranded");
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
     }
 
     /// @dev Fuzz: random quantity with max supply — verify supply tracking

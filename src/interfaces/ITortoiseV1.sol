@@ -17,7 +17,6 @@ struct ContractConfig {
     uint128 defaultSongPrice;
     uint128 platformFee;
     uint128 stakingFee;
-    address platformFeeRecipient;
     address usdcToken;
     address tortoiseShell;
 }

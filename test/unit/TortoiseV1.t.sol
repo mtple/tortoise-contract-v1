@@ -19,7 +19,6 @@ contract TortoiseV1Test is Test {
     address public owner = address(this);
     address public artist = makeAddr("artist");
     address public buyer = makeAddr("buyer");
-    address public platformRecipient = makeAddr("platformRecipient");
     address public collab1 = makeAddr("collab1");
     address public collab2 = makeAddr("collab2");
 
@@ -36,7 +35,6 @@ contract TortoiseV1Test is Test {
 
         tortoise = new TortoiseV1(
             address(usdc),
-            platformRecipient,
             PLATFORM_FEE,
             DEFAULT_PRICE,
             address(shell),
@@ -65,14 +63,13 @@ contract TortoiseV1Test is Test {
         assertEq(cfg.defaultSongPrice, DEFAULT_PRICE);
         assertEq(cfg.platformFee, PLATFORM_FEE);
         assertEq(cfg.stakingFee, STAKING_FEE);
-        assertEq(cfg.platformFeeRecipient, platformRecipient);
         assertEq(cfg.usdcToken, address(usdc));
         assertEq(cfg.tortoiseShell, address(shell));
     }
 
     function test_constructor_defaultValues() public {
         TortoiseV1 t = new TortoiseV1(
-            address(usdc), platformRecipient, 0, 0, address(0), 0
+            address(usdc), 0, 0, address(0), 0
         );
         ContractConfig memory cfg = t.getConfig();
         assertEq(cfg.defaultSongPrice, 850_000);
@@ -82,22 +79,17 @@ contract TortoiseV1Test is Test {
 
     function test_constructor_revertsInvalidUsdc() public {
         vm.expectRevert("Invalid USDC address");
-        new TortoiseV1(address(0), platformRecipient, PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
-    }
-
-    function test_constructor_revertsInvalidFeeRecipient() public {
-        vm.expectRevert("Invalid fee recipient");
-        new TortoiseV1(address(usdc), address(0), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
+        new TortoiseV1(address(0), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
     }
 
     function test_constructor_revertsPlatformFeeTooHigh() public {
         vm.expectRevert("Platform fee exceeds maximum");
-        new TortoiseV1(address(usdc), platformRecipient, 2_000_000, DEFAULT_PRICE, address(shell), STAKING_FEE);
+        new TortoiseV1(address(usdc), 2_000_000, DEFAULT_PRICE, address(shell), STAKING_FEE);
     }
 
     function test_constructor_revertsStakingFeeTooHigh() public {
         vm.expectRevert("Staking fee exceeds maximum");
-        new TortoiseV1(address(usdc), platformRecipient, PLATFORM_FEE, DEFAULT_PRICE, address(shell), 2_000_000);
+        new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), 2_000_000);
     }
 
     function test_nameAndSymbol() public view {
@@ -334,13 +326,12 @@ contract TortoiseV1Test is Test {
         assertEq(totalCost, DEFAULT_PRICE + PLATFORM_FEE + STAKING_FEE);
 
         uint256 artistBalBefore = usdc.balanceOf(artist);
-        uint256 platformBalBefore = usdc.balanceOf(platformRecipient);
 
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
         // Check balances
-        assertEq(usdc.balanceOf(platformRecipient) - platformBalBefore, PLATFORM_FEE);
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE); // Fee held in contract
         assertEq(usdc.balanceOf(artist) - artistBalBefore, DEFAULT_PRICE);
         assertEq(tortoise.balanceOf(buyer, songId), 1);
 
@@ -479,7 +470,7 @@ contract TortoiseV1Test is Test {
     function test_mintSong_noShellConfigured() public {
         // Deploy without shell
         TortoiseV1 noShell = new TortoiseV1(
-            address(usdc), platformRecipient, PLATFORM_FEE, DEFAULT_PRICE, address(0), 0
+            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(0), 0
         );
 
         vm.prank(artist);
@@ -490,30 +481,28 @@ contract TortoiseV1Test is Test {
         usdc.approve(address(noShell), type(uint256).max);
 
         uint256 artistBefore = usdc.balanceOf(artist);
-        uint256 platformBefore = usdc.balanceOf(platformRecipient);
         uint256 buyerBefore = usdc.balanceOf(buyer);
 
         vm.prank(buyer);
         noShell.mintSong(songId, 1, buyer);
 
         assertEq(noShell.balanceOf(buyer, songId), 1);
-        // Verify payments went to correct places (no staking fee with no shell)
-        assertEq(usdc.balanceOf(platformRecipient) - platformBefore, PLATFORM_FEE);
+        // Verify payments (no staking fee with no shell)
         assertEq(usdc.balanceOf(artist) - artistBefore, DEFAULT_PRICE);
         assertEq(buyerBefore - usdc.balanceOf(buyer), uint256(DEFAULT_PRICE) + PLATFORM_FEE);
-        // No USDC left in contract
-        assertEq(usdc.balanceOf(address(noShell)), 0);
+        // Platform fee held in contract
+        assertEq(usdc.balanceOf(address(noShell)), PLATFORM_FEE);
     }
 
-    function test_mintSong_zeroUsdcLeftAfterMint() public {
+    function test_mintSong_platformFeeHeldInContract() public {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("My Song", 0, 0, "ipfs://hash");
 
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        // No USDC should remain in the contract
-        assertEq(usdc.balanceOf(address(tortoise)), 0);
+        // Platform fee should be held in contract
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE);
     }
 
     // ============ Admin Functions ============
@@ -591,16 +580,44 @@ contract TortoiseV1Test is Test {
         tortoise.updateDefaultPrice(0);
     }
 
-    function test_updatePlatformFeeRecipient() public {
-        address newRecipient = makeAddr("newRecipient");
-        tortoise.updatePlatformFeeRecipient(newRecipient);
-        ContractConfig memory cfg = tortoise.getConfig();
-        assertEq(cfg.platformFeeRecipient, newRecipient);
+    function test_withdrawPlatformFees() public {
+        // Mint to accumulate platform fees
+        vm.prank(artist);
+        uint256 songId = tortoise.createSong("Fee Song", 0, 0, "ipfs://fee");
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE);
+
+        uint256 ownerBefore = usdc.balanceOf(owner);
+        tortoise.withdrawPlatformFees();
+
+        assertEq(usdc.balanceOf(address(tortoise)), 0);
+        assertEq(usdc.balanceOf(owner) - ownerBefore, PLATFORM_FEE);
     }
 
-    function test_updatePlatformFeeRecipient_revertsZeroAddress() public {
-        vm.expectRevert("Invalid recipient");
-        tortoise.updatePlatformFeeRecipient(address(0));
+    function test_withdrawPlatformFees_revertsNoFees() public {
+        vm.expectRevert("No fees to withdraw");
+        tortoise.withdrawPlatformFees();
+    }
+
+    function test_withdrawPlatformFees_accumulates() public {
+        vm.prank(artist);
+        uint256 songId = tortoise.createSong("Fee Song", 0, 0, "ipfs://fee");
+
+        // Mint 3 times
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        // 3 platform fees accumulated
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE * 3);
+
+        tortoise.withdrawPlatformFees();
+        assertEq(usdc.balanceOf(address(tortoise)), 0);
     }
 
     function test_recoverTokens() public {
@@ -627,7 +644,7 @@ contract TortoiseV1Test is Test {
         vm.expectRevert();
         tortoise.updateDefaultPrice(1);
         vm.expectRevert();
-        tortoise.updatePlatformFeeRecipient(buyer);
+        tortoise.withdrawPlatformFees();
         vm.expectRevert();
         tortoise.pause();
         vm.expectRevert();
