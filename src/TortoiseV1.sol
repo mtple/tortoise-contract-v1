@@ -20,6 +20,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     uint256 public constant MAX_MINT_QUANTITY = 100_000;
     uint128 public constant MAX_PLATFORM_FEE = 1_000_000;
     uint128 public constant MAX_STAKING_FEE = 1_000_000;
+    uint128 public constant MIN_SONG_PRICE = 100_000; // $0.10 minimum
     uint128 public constant DEFAULT_SONG_PRICE = 850_000;
     uint128 public constant DEFAULT_PLATFORM_FEE = 50_000;
 
@@ -138,6 +139,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
         songId = nextSongId++;
         uint128 actualPrice = price == 0 ? config.defaultSongPrice : price;
+        require(actualPrice >= MIN_SONG_PRICE, "Price below minimum");
 
         songs[songId] = Song({
             title: title,
@@ -216,7 +218,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     }
 
     function updateDefaultPrice(uint128 newPrice) external onlyOwner {
-        require(newPrice > 0, "Price must be positive");
+        require(newPrice >= MIN_SONG_PRICE, "Price below minimum");
         emit DefaultPriceUpdated(config.defaultSongPrice, newPrice);
         config.defaultSongPrice = newPrice;
     }

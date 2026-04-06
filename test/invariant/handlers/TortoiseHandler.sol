@@ -46,7 +46,7 @@ contract TortoiseHandler is Test {
 
     function createSong(uint256 artistSeed, uint128 price) external {
         address artist = artists[artistSeed % artists.length];
-        price = uint128(bound(price, 0, 10_000_000));
+        price = uint128(bound(price, 100_000, 10_000_000)); // MIN_SONG_PRICE
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Handler Song", price, 0, "ipfs://handler");

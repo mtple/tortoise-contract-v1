@@ -593,7 +593,7 @@ contract TortoiseV1Test is Test {
     }
 
     function test_updateDefaultPrice_revertsZero() public {
-        vm.expectRevert("Price must be positive");
+        vm.expectRevert("Price below minimum");
         tortoise.updateDefaultPrice(0);
     }
 

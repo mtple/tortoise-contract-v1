@@ -64,7 +64,7 @@ contract TortoiseV1FuzzTest is Test {
 
     /// @dev Fuzz: mint with random price, verify payment sums
     function testFuzz_mintSong_paymentSumsCorrectly(uint128 price, uint256 quantity) public {
-        price = uint128(bound(price, 1, 100_000_000)); // up to $100
+        price = uint128(bound(price, 100_000, 100_000_000)); // MIN_SONG_PRICE to $100
         quantity = bound(quantity, 1, 100);
 
         vm.prank(artist);
@@ -99,7 +99,7 @@ contract TortoiseV1FuzzTest is Test {
         uint256 quantity
     ) public {
         splitPct = uint96(bound(splitPct, 100, 9900)); // 1% to 99%
-        price = uint128(bound(price, 1, 100_000_000));
+        price = uint128(bound(price, 100_000, 100_000_000));
         quantity = bound(quantity, 1, 100);
 
         address collab = makeAddr("collab");
@@ -133,7 +133,7 @@ contract TortoiseV1FuzzTest is Test {
         uint256 quantity
     ) public {
         numSplits = uint8(bound(numSplits, 2, 10));
-        price = uint128(bound(price, 10_000, 100_000_000)); // min $0.01 to avoid dust issues with many splits
+        price = uint128(bound(price, 100_000, 100_000_000)); // MIN_SONG_PRICE to avoid dust issues with many splits
         quantity = bound(quantity, 1, 50);
 
         vm.prank(artist);
@@ -194,7 +194,7 @@ contract TortoiseV1FuzzTest is Test {
         uint128 price,
         uint256 quantity
     ) public {
-        price = uint128(bound(price, 1, 100_000_000));
+        price = uint128(bound(price, 100_000, 100_000_000));
         quantity = bound(quantity, 1, 100);
 
         vm.prank(artist);

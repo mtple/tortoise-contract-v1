@@ -140,18 +140,28 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued USDC rewards, including rewards since the last checkpoint.
-        // Do NOT reduce reservedBalance — the forfeited rewards continue emitting via
-        // rewardRate and will be claimed by remaining stakers. Reducing reservedBalance
-        // here would cause underflow when those stakers claim.
+        // Forfeit all accrued USDC rewards. Reduce reservedBalance and
+        // totalRewardsDeposited so the forfeited USDC is recycled into future
+        // rewards via depositRewards (which detects balanceOf > totalRewardsDeposited).
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
+            reservedBalance -= forfeited;
+            totalRewardsDeposited -= forfeited / REWARD_SCALAR;
             userUnpaidRewards[msg.sender] = 0;
         }
         userRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
 
         stakedBalance[msg.sender] = 0;
         totalStaked -= amount;
+
+        // If all stakers have exited mid-period, queue remaining rewards
+        // so they aren't lost emitting into a zero-totalStaked void.
+        if (totalStaked == 0 && block.timestamp < periodFinish) {
+            uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
+            _queuedReward += remaining;
+            rewardRate = 0;
+            periodFinish = block.timestamp;
+        }
 
         stakingToken.safeTransfer(msg.sender, amount);
         emit EmergencyWithdraw(msg.sender, amount);
@@ -298,6 +308,15 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
 
         stakedBalance[user] -= amount;
         totalStaked -= amount;
+
+        // If all stakers have exited mid-period, queue remaining rewards
+        // so they aren't lost emitting into a zero-totalStaked void.
+        if (totalStaked == 0 && block.timestamp < periodFinish) {
+            uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
+            _queuedReward += remaining;
+            rewardRate = 0;
+            periodFinish = block.timestamp;
+        }
 
         stakingToken.safeTransfer(user, amount);
         emit Withdrawn(user, amount);
