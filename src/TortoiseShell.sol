@@ -159,6 +159,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             _queuedReward += remaining;
+            reservedBalance -= remaining;
             rewardRate = 0;
             periodFinish = block.timestamp;
         }
@@ -314,6 +315,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             _queuedReward += remaining;
+            reservedBalance -= remaining;
             rewardRate = 0;
             periodFinish = block.timestamp;
         }
