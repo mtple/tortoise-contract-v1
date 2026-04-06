@@ -507,13 +507,14 @@ contract TortoiseShellTest is Test {
         assertFalse(shell.authorizedCallers(owner));
 
         // Fund shell with USDC so depositRewards has real effect
+        // Rewards are queued when totalStaked == 0, so rewardRate stays 0 until someone stakes
         usdc.mint(address(shell), 100e6);
         shell.depositRewards(100e6);
-        assertGt(shell.rewardRate(), 0);
 
-        // Owner can also creditStake
+        // Owner can also creditStake — this creates a staker and flushes queued rewards
         shell.creditStake(alice, 1);
         assertEq(shell.stakedBalance(alice), TORT_PER_COLLECTION);
+        assertGt(shell.rewardRate(), 0);
     }
 
     function test_adminFunctions_revertNonOwner() public {

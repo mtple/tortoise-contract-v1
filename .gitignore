@@ -20,5 +20,8 @@ node_modules/
 lcov.info
 coverage/
 
+# Internal docs
+md/
+
 # OS
 .DS_Store

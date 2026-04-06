@@ -16,6 +16,8 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     IERC20 public immutable stakingToken; // $TORT
     IERC20 public immutable rewardToken; // USDC
 
+    error TokensMustDiffer();
+
     // ============ Staking ============
 
     mapping(address => uint256) public stakedBalance;
@@ -30,6 +32,8 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     uint256 public rewardPerTokenStored;
     uint256 public reservedBalance; // USDC earned but not yet claimed
     uint256 public constant REWARD_SCALAR = 1e12; // Scale 6-decimal USDC to 18 internally
+    uint256 public totalRewardsDeposited; // Cumulative USDC deposited (native 6-decimal)
+    uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public userUnpaidRewards;
 
@@ -95,6 +99,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     ) Ownable(msg.sender) {
         if (_stakingToken == address(0)) revert ZeroAddress();
         if (_rewardToken == address(0)) revert ZeroAddress();
+        if (_stakingToken == _rewardToken) revert TokensMustDiffer();
 
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
@@ -109,6 +114,10 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
 
         stakedBalance[msg.sender] += amount;
         totalStaked += amount;
+
+        if (_queuedReward > 0) {
+            _flushQueuedReward();
+        }
 
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
         emit Staked(msg.sender, amount);
@@ -132,9 +141,11 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
 
         // Forfeit all accrued USDC rewards, including rewards since the last checkpoint.
+        // Do NOT reduce reservedBalance — the forfeited rewards continue emitting via
+        // rewardRate and will be claimed by remaining stakers. Reducing reservedBalance
+        // here would cause underflow when those stakers claim.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
-            reservedBalance -= forfeited;
             userUnpaidRewards[msg.sender] = 0;
         }
         userRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
@@ -149,11 +160,13 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     // ============ Called by TortoiseV1 ============
 
     function depositRewards(uint256 /*amount*/) external onlyAuthorizedCaller updateReward(address(0)) {
-        // Calculate actual new USDC from balance rather than trusting caller-provided amount
+        // Calculate actual new USDC from balance vs cumulative deposit tracking.
+        // Using totalRewardsDeposited instead of reservedBalance/REWARD_SCALAR avoids
+        // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
         uint256 currentBalance = rewardToken.balanceOf(address(this));
-        uint256 unscaledReserved = reservedBalance / REWARD_SCALAR;
-        uint256 actual = currentBalance > unscaledReserved ? currentBalance - unscaledReserved : 0;
+        uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
         if (actual == 0) return;
+        totalRewardsDeposited += actual;
         _addReward(actual);
         emit RewardsDeposited(actual, rewardRate);
     }
@@ -174,6 +187,10 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         stakedBalance[user] += creditAmount;
         totalStaked += creditAmount;
         totalTortCredited += creditAmount;
+
+        if (_queuedReward > 0) {
+            _flushQueuedReward();
+        }
 
         emit StakeCredited(user, creditAmount, quantity);
     }
@@ -297,12 +314,24 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         if (payout == 0) return;
 
         reservedBalance -= reward;
+        totalRewardsDeposited -= payout;
         rewardToken.safeTransfer(user, payout);
         emit RewardsClaimed(user, payout);
     }
 
     function _addReward(uint256 reward) internal {
         reward *= REWARD_SCALAR;
+
+        // Queue rewards when no one is staked — rewardPerToken won't accumulate
+        // with totalStaked == 0, so these rewards would be permanently lost.
+        if (totalStaked == 0) {
+            _queuedReward += reward;
+            return;
+        }
+
+        reward += _queuedReward;
+        _queuedReward = 0;
+
         if (block.timestamp >= periodFinish) {
             rewardRate = reward / rewardDuration;
         } else {
@@ -313,5 +342,22 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + rewardDuration;
         reservedBalance += reward;
+    }
+
+    function _flushQueuedReward() internal {
+        uint256 queued = _queuedReward;
+        if (queued == 0) return;
+        _queuedReward = 0;
+
+        if (block.timestamp >= periodFinish) {
+            rewardRate = queued / rewardDuration;
+        } else {
+            uint256 remaining = periodFinish - block.timestamp;
+            uint256 leftover = remaining * rewardRate;
+            rewardRate = (queued + leftover) / rewardDuration;
+        }
+        lastUpdateTime = block.timestamp;
+        periodFinish = block.timestamp + rewardDuration;
+        reservedBalance += queued;
     }
 }
