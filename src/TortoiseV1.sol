@@ -58,7 +58,12 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         uint256 indexed songId, address indexed recipient, uint256 amount, bool isPlatformFee
     );
     event StakingFeeDistributed(uint256 indexed songId, uint256 amount);
-    event StakeCredited(uint256 indexed songId, address indexed recipient, uint256 quantity);
+    event StakeCredited(
+        uint256 indexed songId,
+        address indexed recipient,
+        uint256 quantity,
+        uint256 creditedAmount
+    );
     event ShellCreditFailed(
         uint256 indexed songId,
         address indexed recipient,
@@ -336,8 +341,8 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     function _creditShell(uint256 songId, address recipient, uint256 quantity) internal {
         if (config.tortoiseShell == address(0)) return;
 
-        try ITortoiseShell(config.tortoiseShell).creditStake(recipient, quantity) {
-            emit StakeCredited(songId, recipient, quantity);
+        try ITortoiseShell(config.tortoiseShell).creditStake(recipient, quantity) returns (uint256 credited) {
+            emit StakeCredited(songId, recipient, quantity, credited);
         } catch (bytes memory reason) {
             emit ShellCreditFailed(songId, recipient, quantity, reason);
         }

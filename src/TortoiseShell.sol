@@ -193,7 +193,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     function creditStake(
         address user,
         uint256 quantity
-    ) external onlyAuthorizedCaller updateReward(user) {
+    ) external onlyAuthorizedCaller updateReward(user) returns (uint256 credited) {
         if (user == address(0)) revert ZeroAddress();
         uint256 creditAmount = quantity * tortRewardPerCollection;
 
@@ -201,7 +201,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         if (creditAmount > tortPool) {
             creditAmount = tortPool;
         }
-        if (creditAmount == 0) return;
+        if (creditAmount == 0) return 0;
 
         tortPool -= creditAmount;
         stakedBalance[user] += creditAmount;
@@ -213,6 +213,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         }
 
         emit StakeCredited(user, creditAmount, quantity);
+        return creditAmount;
     }
 
     // ============ View Functions ============

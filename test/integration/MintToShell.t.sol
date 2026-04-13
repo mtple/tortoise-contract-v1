@@ -165,10 +165,10 @@ contract MintToShellTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");
 
-        // Expect the StakeCredited event (graceful path, NOT ShellCreditFailed)
-        // The shell's creditStake should no-op gracefully, and the try block succeeds
+        // Expect StakeCredited with creditedAmount == 0 (honest signal for pool-exhausted).
+        // Shell's creditStake returns 0 gracefully; V1 emits the real credited amount.
         vm.expectEmit(true, true, false, true, address(tortoise));
-        emit TortoiseV1.StakeCredited(songId, buyer1, 1);
+        emit TortoiseV1.StakeCredited(songId, buyer1, 1, 0);
 
         vm.prank(buyer1);
         tortoise.mintSong(songId, 1, buyer1);
