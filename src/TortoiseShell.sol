@@ -32,7 +32,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     uint256 public rewardPerTokenStored;
     uint256 public reservedBalance; // USDC earned but not yet claimed
     uint256 public constant REWARD_SCALAR = 1e12; // Scale 6-decimal USDC to 18 internally
-    uint256 public totalRewardsDeposited; // Cumulative USDC deposited (native 6-decimal)
+    uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public userUnpaidRewards;
@@ -149,7 +149,6 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
             totalRewardsDeposited -= forfeited / REWARD_SCALAR;
             userUnpaidRewards[msg.sender] = 0;
         }
-        userRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
 
         stakedBalance[msg.sender] = 0;
         totalStaked -= amount;
@@ -186,6 +185,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         address user,
         uint256 quantity
     ) external onlyAuthorizedCaller updateReward(user) {
+        if (user == address(0)) revert ZeroAddress();
         uint256 creditAmount = quantity * tortRewardPerCollection;
 
         // Graceful degradation — never revert, never block mints
@@ -328,13 +328,13 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         uint256 reward = userUnpaidRewards[user];
         if (reward == 0) return;
 
-        userUnpaidRewards[user] = 0;
-
         // Descale from 18 decimals back to 6
         uint256 payout = reward / REWARD_SCALAR;
-        if (payout == 0) return;
+        if (payout == 0) return; // dust remains in userUnpaidRewards for next claim
 
-        reservedBalance -= reward;
+        uint256 exactPaid = payout * REWARD_SCALAR;
+        userUnpaidRewards[user] = reward - exactPaid;
+        reservedBalance -= exactPaid;
         totalRewardsDeposited -= payout;
         rewardToken.safeTransfer(user, payout);
         emit RewardsClaimed(user, payout);

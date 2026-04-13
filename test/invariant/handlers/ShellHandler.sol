@@ -65,7 +65,8 @@ contract ShellHandler is Test {
     }
 
     function depositRewards(uint256 amount) external {
-        amount = bound(amount, 1e6, 100_000e6);
+        // Lower bound = 1 base unit to exercise sub-REWARD_SCALAR dust path.
+        amount = bound(amount, 1, 100_000e6);
 
         vm.startPrank(caller);
         usdc.transfer(address(shell), amount);

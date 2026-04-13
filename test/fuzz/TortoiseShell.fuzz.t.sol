@@ -243,4 +243,47 @@ contract TortoiseShellFuzzTest is Test {
         assertEq(shell.stakedBalance(alice), 0, "Balance not zeroed");
         assertEq(usdc.balanceOf(alice), 0, "Should have forfeited USDC");
     }
+
+    /// @dev Fuzz: claim never burns dust — pre-earned must equal post-claim
+    /// userUnpaidRewards plus scaled payout. Also verifies reservedBalance
+    /// decreases by exactly the scaled-paid amount.
+    function testFuzz_claimRewards_neverBurnsDust(
+        uint256 stakeAmount,
+        uint256 rewardAmount,
+        uint256 elapsed
+    ) public {
+        stakeAmount = bound(stakeAmount, 1e18, 1_000_000_000e18);
+        rewardAmount = bound(rewardAmount, 1, 1_000_000e6);
+        elapsed = bound(elapsed, 1, REWARD_DURATION * 2);
+
+        vm.prank(alice);
+        shell.stake(stakeAmount);
+
+        _depositRewards(rewardAmount);
+        vm.warp(block.timestamp + elapsed);
+
+        uint256 earnedBefore = shell.earned(alice);
+        uint256 reservedBefore = shell.reservedBalance();
+        uint256 usdcBefore = usdc.balanceOf(alice);
+
+        vm.prank(alice);
+        shell.claimRewards();
+
+        uint256 paid = usdc.balanceOf(alice) - usdcBefore;
+        uint256 scaledPaid = paid * 1e12; // REWARD_SCALAR
+
+        // Full dust-preservation invariant: every scaled wei of earned rewards
+        // is either paid out (scaledPaid) or carried forward (userUnpaidRewards).
+        assertEq(
+            shell.userUnpaidRewards(alice) + scaledPaid,
+            earnedBefore,
+            "dust burned on claim"
+        );
+        // reservedBalance drops by exactly the scaled-paid portion.
+        assertEq(
+            shell.reservedBalance(),
+            reservedBefore - scaledPaid,
+            "reservedBalance drifted"
+        );
+    }
 }
