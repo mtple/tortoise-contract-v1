@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity 0.8.30;
+pragma solidity 0.8.34;
 
 import {Script, console} from "forge-std/Script.sol";
 import {TortoiseV1} from "../src/TortoiseV1.sol";
