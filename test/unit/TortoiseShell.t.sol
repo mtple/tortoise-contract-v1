@@ -68,8 +68,18 @@ contract TortoiseShellTest is Test {
     }
 
     function test_constructor_revertsZeroDuration() public {
-        vm.expectRevert("Duration must be positive");
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
         new TortoiseShell(address(tort), address(usdc), 0);
+    }
+
+    function test_constructor_revertsBelowMinDuration() public {
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
+        new TortoiseShell(address(tort), address(usdc), 1 days - 1);
+    }
+
+    function test_constructor_revertsAboveMaxDuration() public {
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
+        new TortoiseShell(address(tort), address(usdc), 365 days + 1);
     }
 
     function test_constructor_revertsZeroStakingToken() public {
@@ -760,12 +770,22 @@ contract TortoiseShellTest is Test {
     // ============ Issue 3: rewardDuration cannot be zero ============
 
     function test_updateRewardDuration_revertsZero() public {
-        vm.expectRevert("Duration must be positive");
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
         shell.updateRewardDuration(0);
     }
 
+    function test_updateRewardDuration_revertsBelowMin() public {
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
+        shell.updateRewardDuration(1 days - 1);
+    }
+
+    function test_updateRewardDuration_revertsAboveMax() public {
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
+        shell.updateRewardDuration(365 days + 1);
+    }
+
     function test_constructor_revertsZeroDuration_explicit() public {
-        vm.expectRevert("Duration must be positive");
+        vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
         new TortoiseShell(address(tort), address(usdc), 0);
     }
 }

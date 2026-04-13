@@ -59,11 +59,18 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     );
     event StakingFeeDistributed(uint256 indexed songId, uint256 amount);
     event StakeCredited(uint256 indexed songId, address indexed recipient, uint256 quantity);
-    event ShellCreditFailed(uint256 indexed songId, address indexed recipient, uint256 quantity);
+    event ShellCreditFailed(
+        uint256 indexed songId,
+        address indexed recipient,
+        uint256 quantity,
+        bytes reason
+    );
     event PlatformFeeUpdated(uint128 oldFee, uint128 newFee);
     event StakingFeeUpdated(uint128 oldFee, uint128 newFee);
     event DefaultPriceUpdated(uint128 oldPrice, uint128 newPrice);
     event PlatformFeesWithdrawn(address indexed to, uint256 amount);
+    event TortoiseShellUpdated(address indexed oldShell, address indexed newShell);
+    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
 
     // ============ Constructor ============
 
@@ -153,6 +160,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         tokenUris[songId] = tokenUri;
         artistSongs[msg.sender].push(songId);
         emit SongCreated(songId, title, msg.sender, actualPrice, maxSupply);
+        emit URI(tokenUri, songId);
     }
 
     function configureSplits(
@@ -210,6 +218,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     }
 
     function updateTortoiseShell(address newShell) external onlyOwner {
+        emit TortoiseShellUpdated(config.tortoiseShell, newShell);
         config.tortoiseShell = newShell;
         if (newShell == address(0) && config.stakingFee > 0) {
             emit StakingFeeUpdated(config.stakingFee, 0);
@@ -241,6 +250,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
     function recoverTokens(address token, uint256 amount) external onlyOwner nonReentrant {
         require(token != config.usdcToken, "Cannot recover USDC");
         IERC20(token).safeTransfer(owner(), amount);
+        emit TokensRecovered(token, owner(), amount);
     }
 
     // ============ Internal Functions ============
@@ -328,8 +338,8 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
         try ITortoiseShell(config.tortoiseShell).creditStake(recipient, quantity) {
             emit StakeCredited(songId, recipient, quantity);
-        } catch {
-            emit ShellCreditFailed(songId, recipient, quantity);
+        } catch (bytes memory reason) {
+            emit ShellCreditFailed(songId, recipient, quantity, reason);
         }
     }
 }

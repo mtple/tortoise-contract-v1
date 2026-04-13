@@ -32,6 +32,8 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     uint256 public rewardPerTokenStored;
     uint256 public reservedBalance; // USDC earned but not yet claimed
     uint256 public constant REWARD_SCALAR = 1e12; // Scale 6-decimal USDC to 18 internally
+    uint256 public constant MIN_REWARD_DURATION = 1 days;
+    uint256 public constant MAX_REWARD_DURATION = 365 days;
     uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     mapping(address => uint256) public userRewardPerTokenPaid;
@@ -70,6 +72,11 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     error InsufficientTortPool();
     error ZeroAddress();
     error RewardPeriodActive();
+    error InvalidRewardDuration();
+
+    // ============ Events (admin) ============
+
+    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
 
     // ============ Modifiers ============
 
@@ -103,7 +110,9 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
 
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
-        require(_rewardDuration > 0, "Duration must be positive");
+        if (_rewardDuration < MIN_REWARD_DURATION || _rewardDuration > MAX_REWARD_DURATION) {
+            revert InvalidRewardDuration();
+        }
         rewardDuration = _rewardDuration;
     }
 
@@ -281,7 +290,9 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
     }
 
     function updateRewardDuration(uint256 newDuration) external onlyOwner {
-        require(newDuration > 0, "Duration must be positive");
+        if (newDuration < MIN_REWARD_DURATION || newDuration > MAX_REWARD_DURATION) {
+            revert InvalidRewardDuration();
+        }
         if (block.timestamp < periodFinish) revert RewardPeriodActive();
         emit RewardDurationUpdated(rewardDuration, newDuration);
         rewardDuration = newDuration;
@@ -299,6 +310,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         require(token != address(stakingToken), "Cannot recover staking token");
         require(token != address(rewardToken), "Cannot recover reward token");
         IERC20(token).safeTransfer(owner(), amount);
+        emit TokensRecovered(token, owner(), amount);
     }
 
     // ============ Internal Functions ============
