@@ -2,7 +2,7 @@
 pragma solidity 0.8.34;
 
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -11,7 +11,7 @@ import {SplitRecipient, SplitLib} from "./libraries/SplitLib.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 import {Song, ContractConfig} from "./interfaces/ITortoiseV1.sol";
 
-contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
+contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable {
     using SafeERC20 for IERC20;
     using SplitLib for SplitRecipient[];
 
@@ -32,6 +32,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     mapping(uint256 => string) internal tokenUris;
     mapping(address => uint256[]) public artistSongs;
     uint256 public nextSongId;
+    mapping(uint256 => mapping(address => uint256)) public pendingClaims;
 
     string private constant _name = "Tortoise";
     string private constant _symbol = "TORT";
@@ -76,6 +77,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     event PlatformFeesWithdrawn(address indexed to, uint256 amount);
     event TortoiseShellUpdated(address indexed oldShell, address indexed newShell);
     event TokensRecovered(address indexed token, address indexed to, uint256 amount);
+    event SplitPaymentDeferred(uint256 indexed songId, address indexed recipient, uint256 amount);
 
     // ============ Constructor ============
 
@@ -142,11 +144,12 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
         return config;
     }
 
-    /// @notice Total cost: (price * quantity) + platformFee + stakingFee
+    /// @notice Total cost: (price + platformFee + stakingFee) * quantity
+    /// All three components scale per copy so cost is proportional to TORT credit received.
     function calculateTotalCost(uint256 songId, uint256 quantity) public view returns (uint256) {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
-        return (uint256(song.price) * quantity) + config.platformFee + config.stakingFee;
+        return (uint256(song.price) + config.platformFee + config.stakingFee) * quantity;
     }
 
     // ============ Song Management ============
@@ -214,7 +217,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     ) external nonReentrant whenNotPaused {
         _validateMint(songId, quantity);
         ContractConfig memory cfg = config;
-        uint256 totalCost = (uint256(songs[songId].price) * quantity) + cfg.platformFee + cfg.stakingFee;
+        uint256 totalCost = (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
         IERC20(cfg.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
         _processMint(songId, quantity, recipient, totalCost, cfg);
     }
@@ -271,6 +274,20 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
         emit TokensRecovered(token, owner(), amount);
     }
 
+    function renounceOwnership() public view override onlyOwner {
+        revert("Renouncing ownership disabled");
+    }
+
+    /// @notice Pull-claim for split recipients whose USDC transfer was deferred
+    /// (e.g. due to Circle blocklist). Anyone can claim on behalf of any recipient.
+    function claimPending(uint256 songId, address recipient) external nonReentrant {
+        uint256 amount = pendingClaims[songId][recipient];
+        require(amount > 0, "Nothing to claim");
+        pendingClaims[songId][recipient] = 0;
+        IERC20(config.usdcToken).safeTransfer(recipient, amount);
+        emit PaymentDistributed(songId, recipient, amount, false);
+    }
+
     // ============ Internal Functions ============
 
     function _validateMint(uint256 songId, uint256 quantity) internal view {
@@ -299,7 +316,9 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
 
         // CEI: all state and USDC movement happens before _mint so the ERC1155
         // receiver callback cannot observe or manipulate mid-mint state.
-        _distributePayments(songId, totalCost, cfg);
+        uint256 scaledPlatformFee = uint256(cfg.platformFee) * quantity;
+        uint256 scaledStakingFee = uint256(cfg.stakingFee) * quantity;
+        _distributePayments(songId, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
         _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
         _mint(actualRecipient, songId, quantity, "");
 
@@ -309,22 +328,28 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     function _distributePayments(
         uint256 songId,
         uint256 totalCost,
+        uint256 platformFeeAmount, // pre-scaled by quantity
+        uint256 stakingFeeAmount,  // pre-scaled by quantity
         ContractConfig memory cfg
     ) internal {
         IERC20 usdc = IERC20(cfg.usdcToken);
 
         // 1. Platform fee — held in contract, withdrawn by owner
-        uint256 platformFeeAmount = cfg.platformFee;
         if (platformFeeAmount > 0) {
             emit PaymentDistributed(songId, address(this), platformFeeAmount, true);
         }
 
-        // 2. Staking fee -> TortoiseShell
-        uint256 stakingFeeAmount = cfg.stakingFee;
+        // 2. Staking fee -> TortoiseShell — only when pool has TORT to credit.
+        // If the pool is empty, skipping the transfer prevents collectors from
+        // paying a stakingFee that yields no TORT credit (Finding 3).
         if (stakingFeeAmount > 0 && cfg.tortoiseShell != address(0)) {
-            usdc.safeTransfer(cfg.tortoiseShell, stakingFeeAmount);
-            ITortoiseShell(cfg.tortoiseShell).depositRewards(stakingFeeAmount);
-            emit StakingFeeDistributed(songId, stakingFeeAmount);
+            bool poolHasFunds = ITortoiseShell(cfg.tortoiseShell).getTortPoolBalance() > 0;
+            if (poolHasFunds) {
+                usdc.safeTransfer(cfg.tortoiseShell, stakingFeeAmount);
+                ITortoiseShell(cfg.tortoiseShell).depositRewards(stakingFeeAmount);
+                emit StakingFeeDistributed(songId, stakingFeeAmount);
+            }
+            // If pool is empty, stakingFee stays in contract alongside platform fees.
         }
 
         // 3. Artist revenue = totalCost - platformFee - stakingFee
@@ -335,8 +360,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
 
         if (len == 0) {
             address artist = songs[songId].artist;
-            usdc.safeTransfer(artist, artistRevenue);
-            emit PaymentDistributed(songId, artist, artistRevenue, false);
+            _transferOrDefer(songId, usdc, artist, artistRevenue);
         } else {
             uint256 distributed;
             for (uint256 i; i < len;) {
@@ -345,12 +369,26 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
                     ? artistRevenue - distributed // Remainder to last recipient
                     : SplitLib.calculateSplitAmount(artistRevenue, r.percentage);
                 if (amount > 0) {
-                    usdc.safeTransfer(r.recipient, amount);
-                    emit PaymentDistributed(songId, r.recipient, amount, false);
+                    _transferOrDefer(songId, usdc, r.recipient, amount);
                 }
                 distributed += amount;
                 unchecked { ++i; }
             }
+        }
+    }
+
+    /// @dev Attempt USDC transfer; on failure (call reverts or returns false) defer
+    /// to pendingClaims so one bad address cannot brick the entire song (Finding 5).
+    function _transferOrDefer(uint256 songId, IERC20 usdc, address recipient, uint256 amount) internal {
+        (bool ok, bytes memory ret) = address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
+        // Treat as success only if the call didn't revert AND the ERC20 return value is true
+        // (or absent, for tokens that return nothing).
+        bool transferred = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+        if (transferred) {
+            emit PaymentDistributed(songId, recipient, amount, false);
+        } else {
+            pendingClaims[songId][recipient] += amount;
+            emit SplitPaymentDeferred(songId, recipient, amount);
         }
     }
 

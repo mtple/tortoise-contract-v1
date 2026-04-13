@@ -151,8 +151,8 @@ contract MintToShellTest is Test {
         // Total cost should equal sum of all distributions
         assertEq(totalCost, platformHeld + artistGot + collabGot + shellGot);
 
-        // Platform fee held in contract
-        assertEq(platformHeld, PLATFORM_FEE);
+        // Platform fee held in contract — scales with quantity (qty=2 here)
+        assertEq(platformHeld, PLATFORM_FEE * 2);
     }
 
     function test_shellCreditFailure_mintStillSucceeds() public {

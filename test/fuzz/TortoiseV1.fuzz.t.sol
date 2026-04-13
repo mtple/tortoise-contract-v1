@@ -59,7 +59,7 @@ contract TortoiseV1FuzzTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, quantity, buyer);
 
-        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE * quantity, "Should only hold platform fees");
     }
 
     /// @dev Fuzz: mint with random price, verify payment sums
@@ -87,9 +87,9 @@ contract TortoiseV1FuzzTest is Test {
         assertEq(buyerSpent, artistGot + platformHeld + shellGot, "Payment sum mismatch");
         // Artist revenue matches expected
         assertEq(artistGot, uint256(price) * quantity, "Artist revenue wrong");
-        // Fees are flat
-        assertEq(platformHeld, PLATFORM_FEE, "Platform fee wrong");
-        assertEq(shellGot, STAKING_FEE, "Staking fee wrong");
+        // Fees scale with quantity
+        assertEq(platformHeld, uint256(PLATFORM_FEE) * quantity, "Platform fee wrong");
+        assertEq(shellGot, uint256(STAKING_FEE) * quantity, "Staking fee wrong");
     }
 
     /// @dev Fuzz: random 2-way splits always distribute full artist revenue
@@ -123,7 +123,7 @@ contract TortoiseV1FuzzTest is Test {
 
         // Split recipients receive exactly the artist revenue
         assertEq(artistGot + collabGot, artistRevenue, "Split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
+        assertEq(usdc.balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * quantity, "Should only hold platform fees");
     }
 
     /// @dev Fuzz: random N-way splits (2-10 recipients) sum correctly
@@ -170,7 +170,7 @@ contract TortoiseV1FuzzTest is Test {
         }
 
         assertEq(totalDistributed, artistRevenue, "Multi-split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "Should only hold platform fee");
+        assertEq(usdc.balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * quantity, "Should only hold platform fees");
     }
 
     /// @dev Fuzz: random quantity with max supply — verify supply tracking

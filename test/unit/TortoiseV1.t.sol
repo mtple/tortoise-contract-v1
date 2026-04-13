@@ -356,7 +356,7 @@ contract TortoiseV1Test is Test {
         uint256 songId = tortoise.createSong("My Song", 0, 0, "ipfs://hash");
 
         uint256 totalCost = tortoise.calculateTotalCost(songId, 5);
-        assertEq(totalCost, (uint256(DEFAULT_PRICE) * 5) + PLATFORM_FEE + STAKING_FEE);
+        assertEq(totalCost, (uint256(DEFAULT_PRICE) + PLATFORM_FEE + STAKING_FEE) * 5);
 
         vm.prank(buyer);
         tortoise.mintSong(songId, 5, buyer);
@@ -684,7 +684,7 @@ contract TortoiseV1Test is Test {
 
         assertEq(
             tortoise.calculateTotalCost(songId, 5),
-            (1_000_000 * 5) + PLATFORM_FEE + STAKING_FEE
+            (1_000_000 + PLATFORM_FEE + STAKING_FEE) * 5
         );
     }
 

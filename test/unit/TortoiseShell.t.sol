@@ -25,7 +25,8 @@ contract TortoiseShellTest is Test {
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
 
-        // Setup authorized caller
+        // Setup authorized caller — must have contract code (addAuthorizedCaller enforces this)
+        vm.etch(tortoiseV1, hex"00");
         shell.addAuthorizedCaller(tortoiseV1);
         shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
 
@@ -267,7 +268,8 @@ contract TortoiseShellTest is Test {
         assertLt(claimed, 700e6);
     }
 
-    function test_claimRewards_revertsWhenPaused() public {
+    function test_claimRewards_worksWhenPaused() public {
+        // Finding 8: claimRewards is NOT pause-gated so users can always retrieve earned rewards.
         vm.prank(alice);
         shell.stake(STAKE_AMOUNT);
 
@@ -278,9 +280,10 @@ contract TortoiseShellTest is Test {
 
         shell.pause();
 
+        uint256 balanceBefore = usdc.balanceOf(alice);
         vm.prank(alice);
-        vm.expectRevert();
-        shell.claimRewards();
+        shell.claimRewards(); // must NOT revert while paused
+        assertGt(usdc.balanceOf(alice) - balanceBefore, 0, "rewards claimed while paused");
     }
 
     function test_overlappingDeposits() public {
@@ -609,8 +612,15 @@ contract TortoiseShellTest is Test {
 
     function test_addAuthorizedCaller() public {
         address newCaller = makeAddr("newCaller");
+        vm.etch(newCaller, hex"00"); // must be a contract
         shell.addAuthorizedCaller(newCaller);
         assertTrue(shell.authorizedCallers(newCaller));
+    }
+
+    function test_addAuthorizedCaller_revertsForEOA() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert("Caller must be a contract");
+        shell.addAuthorizedCaller(eoa);
     }
 
     function test_addAuthorizedCaller_revertsZeroAddress() public {

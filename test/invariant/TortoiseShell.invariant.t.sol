@@ -21,6 +21,7 @@ contract TortoiseShellInvariantTest is Test {
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
 
+        vm.etch(caller, hex"00"); // must have contract code
         shell.addAuthorizedCaller(caller);
         shell.setTortRewardPerCollection(777_777e18);
 

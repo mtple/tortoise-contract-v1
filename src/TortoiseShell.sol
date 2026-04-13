@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.34;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 
-contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pausable {
+contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient, Pausable {
     using SafeERC20 for IERC20;
 
     // ============ Tokens ============
@@ -143,11 +143,11 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
         _withdraw(msg.sender, amount);
     }
 
-    function claimRewards() external nonReentrant whenNotPaused updateReward(msg.sender) {
+    function claimRewards() external nonReentrant updateReward(msg.sender) {
         _claimRewards(msg.sender);
     }
 
-    function exit() external nonReentrant whenNotPaused updateReward(msg.sender) {
+    function exit() external nonReentrant updateReward(msg.sender) {
         _withdraw(msg.sender, stakedBalance[msg.sender]);
         _claimRewards(msg.sender);
     }
@@ -291,8 +291,13 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
 
     function addAuthorizedCaller(address caller) external onlyOwner {
         if (caller == address(0)) revert ZeroAddress();
+        require(caller.code.length > 0, "Caller must be a contract");
         authorizedCallers[caller] = true;
         emit AuthorizedCallerAdded(caller);
+    }
+
+    function renounceOwnership() public view override onlyOwner {
+        revert("Renouncing ownership disabled");
     }
 
     function removeAuthorizedCaller(address caller) external onlyOwner {

@@ -41,10 +41,10 @@ contract TortoiseV1InvariantTest is Test {
     }
 
     /// @dev Invariant: TortoiseV1 USDC balance should only contain accumulated platform fees
-    ///      (platformFee per mint * number of mints)
+    ///      (platformFee per copy * total quantity minted — fees scale with quantity)
     function invariant_onlyPlatformFeesInContract() public view {
         uint256 contractBalance = usdc.balanceOf(address(tortoise));
-        uint256 expectedFees = handler.totalMints() * 50_000; // PLATFORM_FEE per mint
+        uint256 expectedFees = handler.totalQuantityMinted() * 50_000; // PLATFORM_FEE per copy
         assertEq(
             contractBalance,
             expectedFees,

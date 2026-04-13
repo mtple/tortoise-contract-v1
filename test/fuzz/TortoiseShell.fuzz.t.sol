@@ -24,6 +24,7 @@ contract TortoiseShellFuzzTest is Test {
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
 
+        vm.etch(caller, hex"00"); // must have contract code
         shell.addAuthorizedCaller(caller);
         shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
 

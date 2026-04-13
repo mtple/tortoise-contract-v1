@@ -84,10 +84,13 @@ contract MintShellHandler is Test {
         uint256 sid = _song(songSeed);
 
         ghost_mintsAttempted++;
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
         vm.prank(a);
         try tortoise.mintSong(sid, qty, a) {
             ghost_mintsSucceeded++;
-            ghost_stakingFeesForwarded += stakingFee; // fee is per-mint, not per-qty
+            // Staking fee scales with qty and is only forwarded when tortPool > 0.
+            // Measure the actual USDC delta on shell to stay in sync.
+            ghost_stakingFeesForwarded += usdc.balanceOf(address(shell)) - shellUsdcBefore;
         } catch {}
     }
 

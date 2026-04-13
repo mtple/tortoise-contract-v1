@@ -19,6 +19,7 @@ contract TortoiseHandler is Test {
     uint256[] public songIds;
 
     uint256 public totalMints;
+    uint256 public totalQuantityMinted; // sum of quantities across all successful mints
 
     constructor(
         TortoiseV1 _tortoise,
@@ -63,6 +64,7 @@ contract TortoiseHandler is Test {
         vm.prank(buyer);
         try tortoise.mintSong(songId, quantity, buyer) {
             totalMints++;
+            totalQuantityMinted += quantity;
         } catch {}
     }
 

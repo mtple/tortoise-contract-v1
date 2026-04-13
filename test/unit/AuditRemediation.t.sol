@@ -525,4 +525,235 @@ contract AuditRemediationTest is Test {
             "reservedBalance exceeds scaled deposits"
         );
     }
+
+    // ==========================================================
+    // Audit #6 — Finding 1: per-quantity fees
+    // ==========================================================
+
+    function test_mintSong_feesScaleWithQuantity() public {
+        uint256 songId = _createSong();
+        uint256 Q = 7;
+
+        uint256 expectedCost = (uint256(DEFAULT_PRICE) + PLATFORM_FEE + STAKING_FEE) * Q;
+        assertEq(tortoise.calculateTotalCost(songId, Q), expectedCost);
+
+        uint256 buyerBefore = usdc.balanceOf(buyer);
+        vm.prank(buyer);
+        tortoise.mintSong(songId, Q, buyer);
+
+        assertEq(buyerBefore - usdc.balanceOf(buyer), expectedCost, "buyer spent wrong amount");
+        assertEq(usdc.balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * Q, "platform fee wrong");
+        assertEq(usdc.balanceOf(address(shell)), uint256(STAKING_FEE) * Q, "staking fee wrong");
+    }
+
+    function test_calculateTotalCost_matchesMintCost() public {
+        uint256 songId = _createSong();
+        uint256 Q = 100;
+
+        uint256 quoted = tortoise.calculateTotalCost(songId, Q);
+        uint256 buyerBefore = usdc.balanceOf(buyer);
+        vm.prank(buyer);
+        tortoise.mintSong(songId, Q, buyer);
+
+        assertEq(buyerBefore - usdc.balanceOf(buyer), quoted, "calculateTotalCost must match actual debit");
+    }
+
+    // ==========================================================
+    // Audit #6 — Finding 3: skip stakingFee when tortPool is empty
+    // ==========================================================
+
+    function test_stakingFee_notForwardedWhenPoolEmpty() public {
+        uint256 songId = _createSong();
+
+        // Drain pool entirely
+        shell.withdrawTortPool(shell.tortPool());
+        assertEq(shell.tortPool(), 0);
+
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
+        uint256 v1UsdcBefore = usdc.balanceOf(address(tortoise));
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        // Shell received no USDC (pool was empty — stakingFee stays in V1)
+        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore, "shell should not receive staking fee when pool empty");
+        // V1 holds platformFee + stakingFee (both stay)
+        assertEq(
+            usdc.balanceOf(address(tortoise)) - v1UsdcBefore,
+            PLATFORM_FEE + STAKING_FEE,
+            "V1 should hold both fees when pool empty"
+        );
+    }
+
+    function test_stakingFee_forwardedNormallyWhenPoolFunded() public {
+        uint256 songId = _createSong();
+        assertGt(shell.tortPool(), 0);
+
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        assertEq(usdc.balanceOf(address(shell)) - shellUsdcBefore, STAKING_FEE, "staking fee not forwarded");
+    }
+
+    // ==========================================================
+    // Audit #6 — Finding 5: pull-payment for blocklisted recipient
+    // ==========================================================
+
+    function test_blockedRecipient_defersPendingClaim() public {
+        uint256 songId = _createSong();
+
+        // Set up a split with two recipients
+        address blocked = makeAddr("blocked");
+        address normal = makeAddr("normal");
+
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient(blocked, 5000);
+        splits[1] = SplitRecipient(normal, 5000);
+
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        // Simulate USDC blocklist by having MockUSDC revert on transfer to `blocked`
+        // We use a mock that can selectively fail.
+        // Since MockUSDC doesn't natively support blocklisting, we use vm.mockCall
+        // to make the transfer to `blocked` return false.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE / 2)),
+            abi.encode(false)
+        );
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        // `normal` should have received their share
+        assertEq(usdc.balanceOf(normal), DEFAULT_PRICE / 2, "normal recipient not paid");
+        // `blocked` has nothing in wallet but has a pending claim
+        assertEq(usdc.balanceOf(blocked), 0, "blocked should have no direct balance");
+        assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE / 2, "pending claim not set");
+
+        // Now the blocklist lifts — blocked can claimPending
+        vm.clearMockedCalls();
+        tortoise.claimPending(songId, blocked);
+        assertEq(usdc.balanceOf(blocked), DEFAULT_PRICE / 2, "blocked should receive pending claim");
+        assertEq(tortoise.pendingClaims(songId, blocked), 0, "pending claim not cleared");
+    }
+
+    // ==========================================================
+    // Audit #6 — Finding 6: addAuthorizedCaller rejects EOA
+    // ==========================================================
+
+    function test_addAuthorizedCaller_revertsForEOA() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert("Caller must be a contract");
+        shell.addAuthorizedCaller(eoa);
+    }
+
+    function test_addAuthorizedCaller_acceptsContract() public {
+        // TortoiseV1 is already a contract — add a second shell as another authorized caller
+        TortoiseShell shell2 = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
+        shell.addAuthorizedCaller(address(shell2));
+        assertTrue(shell.authorizedCallers(address(shell2)));
+    }
+
+    // ==========================================================
+    // Audit #6 — Finding 7: Ownable2Step + renounceOwnership disabled
+    // ==========================================================
+
+    function test_renounceOwnership_reverts_V1() public {
+        vm.expectRevert("Renouncing ownership disabled");
+        tortoise.renounceOwnership();
+    }
+
+    function test_renounceOwnership_reverts_Shell() public {
+        vm.expectRevert("Renouncing ownership disabled");
+        shell.renounceOwnership();
+    }
+
+    function test_transferOwnership_requiresTwoSteps_V1() public {
+        address newOwner = makeAddr("newOwner");
+
+        // Step 1: propose
+        tortoise.transferOwnership(newOwner);
+        assertEq(tortoise.owner(), address(this), "ownership should not transfer yet");
+        assertEq(tortoise.pendingOwner(), newOwner);
+
+        // Step 2: accept
+        vm.prank(newOwner);
+        tortoise.acceptOwnership();
+        assertEq(tortoise.owner(), newOwner);
+    }
+
+    function test_transferOwnership_requiresTwoSteps_Shell() public {
+        address newOwner = makeAddr("newOwner");
+
+        shell.transferOwnership(newOwner);
+        assertEq(shell.owner(), address(this));
+        assertEq(shell.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        shell.acceptOwnership();
+        assertEq(shell.owner(), newOwner);
+    }
+
+    // ==========================================================
+    // Audit #6 — Finding 8: claimRewards/exit not pause-gated
+    // ==========================================================
+
+    function test_claimRewards_worksWhilePaused() public {
+        // Stake some TORT and accrue rewards
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        uint256 songId = _createSong();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.warp(block.timestamp + REWARD_DURATION);
+
+        shell.pause();
+
+        uint256 balBefore = usdc.balanceOf(artist);
+        vm.prank(artist);
+        shell.claimRewards(); // must NOT revert while paused
+        assertGt(usdc.balanceOf(artist) - balBefore, 0, "no rewards claimed while paused");
+    }
+
+    function test_exit_worksWhilePaused() public {
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        uint256 songId = _createSong();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.warp(block.timestamp + REWARD_DURATION);
+
+        shell.pause();
+
+        uint256 tortBefore = tort.balanceOf(artist);
+        uint256 usdcBefore = usdc.balanceOf(artist);
+        vm.prank(artist);
+        shell.exit(); // must NOT revert while paused
+
+        assertEq(tort.balanceOf(artist) - tortBefore, 1000e18, "stake not returned on exit");
+        assertGt(usdc.balanceOf(artist) - usdcBefore, 0, "no rewards on exit");
+    }
+
+    function test_stake_revertsWhilePaused() public {
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+
+        shell.pause();
+
+        vm.prank(artist);
+        vm.expectRevert();
+        shell.stake(1000e18);
+    }
 }
