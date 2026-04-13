@@ -550,10 +550,17 @@ contract TortoiseV1Test is Test {
     }
 
     function test_updateTortoiseShell() public {
-        address newShell = makeAddr("newShell");
-        tortoise.updateTortoiseShell(newShell);
+        // New shell must be a contract — deploy a second one.
+        TortoiseShell newShell = new TortoiseShell(address(tort), address(usdc), 604_800);
+        tortoise.updateTortoiseShell(address(newShell));
         ContractConfig memory cfg = tortoise.getConfig();
-        assertEq(cfg.tortoiseShell, newShell);
+        assertEq(cfg.tortoiseShell, address(newShell));
+    }
+
+    function test_updateTortoiseShell_rejectsEOA() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert("Shell must be a contract");
+        tortoise.updateTortoiseShell(eoa);
     }
 
     function test_updateTortoiseShell_disablesIntegration() public {

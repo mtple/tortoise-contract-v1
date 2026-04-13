@@ -54,7 +54,8 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardsClaimed(address indexed user, uint256 amount);
-    event RewardsDeposited(uint256 amount, uint256 newRewardRate);
+    event RewardsDeposited(uint256 declared, uint256 actual, uint256 newRewardRate);
+    event QueuedRewardFlushed(uint256 amount, uint256 newRewardRate);
     event StakeCredited(address indexed user, uint256 amount, uint256 quantity);
     event TortPoolFunded(uint256 amount, uint256 newPoolBalance);
     event TortPoolWithdrawn(uint256 amount, uint256 newPoolBalance);
@@ -99,6 +100,11 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
 
     // ============ Constructor ============
 
+    /// @dev Both `stakingToken` and `rewardToken` MUST be standard ERC20s:
+    /// non-rebasing, non-fee-on-transfer, non-reentrant (not ERC777), and without
+    /// transfer hooks. Accounting (`tortPool`, `stakedBalance`, `reservedBalance`,
+    /// `totalRewardsDeposited`) assumes `amount` transferred equals `amount` received.
+    /// Behavior is undefined under non-standard tokens.
     constructor(
         address _stakingToken,
         address _rewardToken,
@@ -114,6 +120,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
             revert InvalidRewardDuration();
         }
         rewardDuration = _rewardDuration;
+        emit RewardDurationUpdated(0, _rewardDuration);
     }
 
     // ============ User-Facing Functions ============
@@ -166,10 +173,12 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
         // so they aren't lost emitting into a zero-totalStaked void.
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
-            _queuedReward += remaining;
-            reservedBalance -= remaining;
-            rewardRate = 0;
-            periodFinish = block.timestamp;
+            if (remaining > 0) {
+                _queuedReward += remaining;
+                reservedBalance -= remaining;
+                rewardRate = 0;
+                periodFinish = block.timestamp;
+            }
         }
 
         stakingToken.safeTransfer(msg.sender, amount);
@@ -178,16 +187,17 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
 
     // ============ Called by TortoiseV1 ============
 
-    function depositRewards(uint256 /*amount*/) external onlyAuthorizedCaller updateReward(address(0)) {
+    function depositRewards(uint256 amount) external onlyAuthorizedCaller updateReward(address(0)) {
         // Calculate actual new USDC from balance vs cumulative deposit tracking.
         // Using totalRewardsDeposited instead of reservedBalance/REWARD_SCALAR avoids
         // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
+        // `actual` may exceed `amount` when forfeited rewards are being recycled.
         uint256 currentBalance = rewardToken.balanceOf(address(this));
         uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
         if (actual == 0) return;
         totalRewardsDeposited += actual;
         _addReward(actual);
-        emit RewardsDeposited(actual, rewardRate);
+        emit RewardsDeposited(amount, actual, rewardRate);
     }
 
     function creditStake(
@@ -327,10 +337,12 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
         // so they aren't lost emitting into a zero-totalStaked void.
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
-            _queuedReward += remaining;
-            reservedBalance -= remaining;
-            rewardRate = 0;
-            periodFinish = block.timestamp;
+            if (remaining > 0) {
+                _queuedReward += remaining;
+                reservedBalance -= remaining;
+                rewardRate = 0;
+                periodFinish = block.timestamp;
+            }
         }
 
         stakingToken.safeTransfer(user, amount);
@@ -393,5 +405,6 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pau
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + rewardDuration;
         reservedBalance += queued;
+        emit QueuedRewardFlushed(queued, rewardRate);
     }
 }

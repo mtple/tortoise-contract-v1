@@ -79,6 +79,9 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
 
     // ============ Constructor ============
 
+    /// @dev Both `usdcToken` and any `ITortoiseShell.rewardToken/stakingToken` MUST be
+    /// standard ERC20s: non-rebasing, non-fee-on-transfer, non-reentrant (not ERC777),
+    /// and without transfer hooks. Behavior is undefined under non-standard tokens.
     constructor(
         address _usdcToken,
         uint64 _platformFee,
@@ -91,13 +94,21 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
         require(_stakingFee <= MAX_STAKING_FEE, "Staking fee exceeds maximum");
         require(_stakingFee == 0 || _tortoiseShell != address(0), "No shell configured");
 
+        uint128 initialPrice = _defaultSongPrice == 0 ? DEFAULT_SONG_PRICE : _defaultSongPrice;
+        uint64 initialPlatformFee = _platformFee == 0 ? DEFAULT_PLATFORM_FEE : _platformFee;
+
         config = ContractConfig({
-            defaultSongPrice: _defaultSongPrice == 0 ? DEFAULT_SONG_PRICE : _defaultSongPrice,
-            platformFee: _platformFee == 0 ? DEFAULT_PLATFORM_FEE : _platformFee,
+            defaultSongPrice: initialPrice,
+            platformFee: initialPlatformFee,
             stakingFee: _stakingFee,
             usdcToken: _usdcToken,
             tortoiseShell: _tortoiseShell // Can be address(0) — shell integration is optional
         });
+
+        emit DefaultPriceUpdated(0, initialPrice);
+        emit PlatformFeeUpdated(0, initialPlatformFee);
+        if (_stakingFee > 0) emit StakingFeeUpdated(0, _stakingFee);
+        if (_tortoiseShell != address(0)) emit TortoiseShellUpdated(address(0), _tortoiseShell);
     }
 
     // ============ View Functions ============
@@ -171,7 +182,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     function configureSplits(
         uint256 songId,
         SplitRecipient[] calldata splits
-    ) external whenNotPaused {
+    ) external whenNotPaused nonReentrant {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
         require(msg.sender == song.artist, "Only artist can configure splits");
@@ -185,7 +196,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
         emit SplitsConfigured(songId, splits);
     }
 
-    function lockSplits(uint256 songId) external whenNotPaused {
+    function lockSplits(uint256 songId) external whenNotPaused nonReentrant {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
         require(msg.sender == song.artist, "Only artist can lock splits");
@@ -224,6 +235,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     }
 
     function updateTortoiseShell(address newShell) external onlyOwner {
+        require(newShell == address(0) || newShell.code.length > 0, "Shell must be a contract");
         emit TortoiseShellUpdated(config.tortoiseShell, newShell);
         config.tortoiseShell = newShell;
         if (newShell == address(0) && config.stakingFee > 0) {
@@ -285,9 +297,11 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
         require(song.currentSupply + quantity <= type(uint128).max, "Supply overflow");
         song.currentSupply += uint128(quantity);
 
-        _mint(actualRecipient, songId, quantity, "");
+        // CEI: all state and USDC movement happens before _mint so the ERC1155
+        // receiver callback cannot observe or manipulate mid-mint state.
         _distributePayments(songId, totalCost, cfg);
         _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
+        _mint(actualRecipient, songId, quantity, "");
 
         emit SongMinted(songId, msg.sender, actualRecipient, quantity, totalCost);
     }

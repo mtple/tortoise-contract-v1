@@ -271,16 +271,11 @@ contract AuditRemediationTest is Test {
         assertEq(tortoise.getConfig().tortoiseShell, address(0));
     }
 
-    function test_updateTortoiseShell_toEOAIsAllowedButBreaksMints() public {
+    function test_updateTortoiseShell_rejectsEOA() public {
+        // M-04: owner cannot accidentally point V1 at an EOA.
         address eoa = makeAddr("fakeShell");
+        vm.expectRevert("Shell must be a contract");
         tortoise.updateTortoiseShell(eoa);
-
-        // Mint now fails — safeTransfer to EOA succeeds (USDC ERC20),
-        // but depositRewards on an EOA reverts (no code).
-        uint256 songId = _createSong();
-        vm.prank(buyer);
-        vm.expectRevert();
-        tortoise.mintSong(songId, 1, buyer);
     }
 
     function test_updateStakingFee_revertsWhenShellZero() public {
