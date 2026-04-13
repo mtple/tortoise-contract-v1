@@ -14,11 +14,11 @@ struct Song {
 }
 
 struct ContractConfig {
-    uint128 defaultSongPrice;
-    uint128 platformFee;
-    uint128 stakingFee;
-    address usdcToken;
-    address tortoiseShell;
+    uint128 defaultSongPrice; // slot 0: bytes 0-15
+    uint64 platformFee;       // slot 0: bytes 16-23
+    uint64 stakingFee;        // slot 0: bytes 24-31
+    address usdcToken;        // slot 1: bytes 0-19
+    address tortoiseShell;    // slot 2
 }
 
 interface ITortoiseV1 {

@@ -2,13 +2,13 @@
 pragma solidity 0.8.34;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 
-contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
+contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuardTransient, Pausable {
     using SafeERC20 for IERC20;
 
     // ============ Tokens ============
@@ -136,7 +136,7 @@ contract TortoiseShell is ITortoiseShell, Ownable, ReentrancyGuard, Pausable {
         _withdraw(msg.sender, amount);
     }
 
-    function claimRewards() public nonReentrant whenNotPaused updateReward(msg.sender) {
+    function claimRewards() external nonReentrant whenNotPaused updateReward(msg.sender) {
         _claimRewards(msg.sender);
     }
 

@@ -19,8 +19,8 @@ contract TortoiseV1FuzzTest is Test {
     address public artist = makeAddr("artist");
     address public buyer = makeAddr("buyer");
 
-    uint128 constant PLATFORM_FEE = 50_000;
-    uint128 constant STAKING_FEE = 100_000;
+    uint64 constant PLATFORM_FEE = 50_000;
+    uint64 constant STAKING_FEE = 100_000;
     uint128 constant DEFAULT_PRICE = 850_000;
 
     function setUp() public {

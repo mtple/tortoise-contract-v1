@@ -9,9 +9,9 @@ import {Config} from "./helpers/Config.s.sol";
 contract DeployTortoise is Config {
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint128 platformFee = uint128(vm.envUint("INITIAL_PLATFORM_FEE"));
+        uint64 platformFee = uint64(vm.envUint("INITIAL_PLATFORM_FEE"));
         uint128 defaultPrice = uint128(vm.envUint("INITIAL_SONG_PRICE"));
-        uint128 stakingFee = uint128(vm.envUint("INITIAL_STAKING_FEE"));
+        uint64 stakingFee = uint64(vm.envUint("INITIAL_STAKING_FEE"));
 
         address usdcAddress = getUsdcAddress();
         address tortAddress = getTortAddress();

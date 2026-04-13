@@ -24,8 +24,8 @@ contract AuditRemediationTest is Test {
     address public artist = makeAddr("artist");
     address public buyer = makeAddr("buyer");
 
-    uint128 constant PLATFORM_FEE = 50_000; // $0.05
-    uint128 constant STAKING_FEE = 100_000; // $0.10
+    uint64 constant PLATFORM_FEE = 50_000; // $0.05
+    uint64 constant STAKING_FEE = 100_000; // $0.10
     uint128 constant DEFAULT_PRICE = 850_000; // $0.85
     uint256 constant TORT_PER_COLLECTION = 10e18;
     uint256 constant REWARD_DURATION = 604_800;
@@ -47,7 +47,7 @@ contract AuditRemediationTest is Test {
         uint256 quantity,
         uint256 creditedAmount
     );
-    event StakingFeeUpdated(uint128 oldFee, uint128 newFee);
+    event StakingFeeUpdated(uint64 oldFee, uint64 newFee);
 
     function setUp() public {
         usdc = new MockUSDC();

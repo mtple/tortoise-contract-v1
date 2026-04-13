@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,18 +11,18 @@ import {SplitRecipient, SplitLib} from "./libraries/SplitLib.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 import {Song, ContractConfig} from "./interfaces/ITortoiseV1.sol";
 
-contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
+contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuardTransient, Pausable {
     using SafeERC20 for IERC20;
     using SplitLib for SplitRecipient[];
 
     // ============ Constants ============
 
     uint256 public constant MAX_MINT_QUANTITY = 100_000;
-    uint128 public constant MAX_PLATFORM_FEE = 1_000_000;
-    uint128 public constant MAX_STAKING_FEE = 1_000_000;
+    uint64 public constant MAX_PLATFORM_FEE = 1_000_000;
+    uint64 public constant MAX_STAKING_FEE = 1_000_000;
     uint128 public constant MIN_SONG_PRICE = 100_000; // $0.10 minimum
     uint128 public constant DEFAULT_SONG_PRICE = 850_000;
-    uint128 public constant DEFAULT_PLATFORM_FEE = 50_000;
+    uint64 public constant DEFAULT_PLATFORM_FEE = 50_000;
 
     // ============ State ============
 
@@ -70,8 +70,8 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         uint256 quantity,
         bytes reason
     );
-    event PlatformFeeUpdated(uint128 oldFee, uint128 newFee);
-    event StakingFeeUpdated(uint128 oldFee, uint128 newFee);
+    event PlatformFeeUpdated(uint64 oldFee, uint64 newFee);
+    event StakingFeeUpdated(uint64 oldFee, uint64 newFee);
     event DefaultPriceUpdated(uint128 oldPrice, uint128 newPrice);
     event PlatformFeesWithdrawn(address indexed to, uint256 amount);
     event TortoiseShellUpdated(address indexed oldShell, address indexed newShell);
@@ -81,10 +81,10 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     constructor(
         address _usdcToken,
-        uint128 _platformFee,
+        uint64 _platformFee,
         uint128 _defaultSongPrice,
         address _tortoiseShell,
-        uint128 _stakingFee
+        uint64 _stakingFee
     ) ERC1155("") Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
         require(_platformFee <= MAX_PLATFORM_FEE, "Platform fee exceeds maximum");
@@ -102,11 +102,11 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     // ============ View Functions ============
 
-    function name() public pure returns (string memory) {
+    function name() external pure returns (string memory) {
         return _name;
     }
 
-    function symbol() public pure returns (string memory) {
+    function symbol() external pure returns (string memory) {
         return _symbol;
     }
 
@@ -202,20 +202,21 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         address recipient
     ) external nonReentrant whenNotPaused {
         _validateMint(songId, quantity);
-        uint256 totalCost = calculateTotalCost(songId, quantity);
-        IERC20(config.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
-        _processMint(songId, quantity, recipient, totalCost);
+        ContractConfig memory cfg = config;
+        uint256 totalCost = (uint256(songs[songId].price) * quantity) + cfg.platformFee + cfg.stakingFee;
+        IERC20(cfg.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
+        _processMint(songId, quantity, recipient, totalCost, cfg);
     }
 
     // ============ Admin Functions ============
 
-    function updatePlatformFee(uint128 newFee) external onlyOwner {
+    function updatePlatformFee(uint64 newFee) external onlyOwner {
         require(newFee <= MAX_PLATFORM_FEE, "Fee exceeds maximum");
         emit PlatformFeeUpdated(config.platformFee, newFee);
         config.platformFee = newFee;
     }
 
-    function updateStakingFee(uint128 newFee) external onlyOwner {
+    function updateStakingFee(uint64 newFee) external onlyOwner {
         require(newFee <= MAX_STAKING_FEE, "Fee exceeds maximum");
         require(newFee == 0 || config.tortoiseShell != address(0), "No shell configured");
         emit StakingFeeUpdated(config.stakingFee, newFee);
@@ -226,7 +227,7 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         emit TortoiseShellUpdated(config.tortoiseShell, newShell);
         config.tortoiseShell = newShell;
         if (newShell == address(0) && config.stakingFee > 0) {
-            emit StakingFeeUpdated(config.stakingFee, 0);
+            emit StakingFeeUpdated(config.stakingFee, uint64(0));
             config.stakingFee = 0;
         }
     }
@@ -275,7 +276,8 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         uint256 songId,
         uint256 quantity,
         address recipient,
-        uint256 totalCost
+        uint256 totalCost,
+        ContractConfig memory cfg
     ) internal {
         Song storage song = songs[songId];
         address actualRecipient = recipient == address(0) ? msg.sender : recipient;
@@ -284,30 +286,30 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         song.currentSupply += uint128(quantity);
 
         _mint(actualRecipient, songId, quantity, "");
-        _distributePayments(songId, quantity, totalCost);
-        _creditShell(songId, actualRecipient, quantity);
+        _distributePayments(songId, totalCost, cfg);
+        _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
 
         emit SongMinted(songId, msg.sender, actualRecipient, quantity, totalCost);
     }
 
     function _distributePayments(
         uint256 songId,
-        uint256 quantity,
-        uint256 totalCost
+        uint256 totalCost,
+        ContractConfig memory cfg
     ) internal {
-        Song storage song = songs[songId];
+        IERC20 usdc = IERC20(cfg.usdcToken);
 
         // 1. Platform fee — held in contract, withdrawn by owner
-        uint256 platformFeeAmount = config.platformFee;
+        uint256 platformFeeAmount = cfg.platformFee;
         if (platformFeeAmount > 0) {
             emit PaymentDistributed(songId, address(this), platformFeeAmount, true);
         }
 
         // 2. Staking fee -> TortoiseShell
-        uint256 stakingFeeAmount = config.stakingFee;
-        if (stakingFeeAmount > 0 && config.tortoiseShell != address(0)) {
-            IERC20(config.usdcToken).safeTransfer(config.tortoiseShell, stakingFeeAmount);
-            ITortoiseShell(config.tortoiseShell).depositRewards(stakingFeeAmount);
+        uint256 stakingFeeAmount = cfg.stakingFee;
+        if (stakingFeeAmount > 0 && cfg.tortoiseShell != address(0)) {
+            usdc.safeTransfer(cfg.tortoiseShell, stakingFeeAmount);
+            ITortoiseShell(cfg.tortoiseShell).depositRewards(stakingFeeAmount);
             emit StakingFeeDistributed(songId, stakingFeeAmount);
         }
 
@@ -315,33 +317,39 @@ contract TortoiseV1 is ERC1155, Ownable, ReentrancyGuard, Pausable {
         uint256 artistRevenue = totalCost - platformFeeAmount - stakingFeeAmount;
 
         SplitRecipient[] storage splits = songSplits[songId];
+        uint256 len = splits.length;
 
-        if (splits.length == 0) {
-            IERC20(config.usdcToken).safeTransfer(song.artist, artistRevenue);
-            emit PaymentDistributed(songId, song.artist, artistRevenue, false);
+        if (len == 0) {
+            address artist = songs[songId].artist;
+            usdc.safeTransfer(artist, artistRevenue);
+            emit PaymentDistributed(songId, artist, artistRevenue, false);
         } else {
-            uint256 distributed = 0;
-            for (uint256 i = 0; i < splits.length; i++) {
-                uint256 amount;
-                if (i == splits.length - 1) {
-                    amount = artistRevenue - distributed; // Remainder to last recipient
-                } else {
-                    amount = SplitLib.calculateSplitAmount(artistRevenue, splits[i].percentage);
+            uint256 distributed;
+            for (uint256 i; i < len;) {
+                SplitRecipient storage r = splits[i];
+                uint256 amount = (i == len - 1)
+                    ? artistRevenue - distributed // Remainder to last recipient
+                    : SplitLib.calculateSplitAmount(artistRevenue, r.percentage);
+                if (amount > 0) {
+                    usdc.safeTransfer(r.recipient, amount);
+                    emit PaymentDistributed(songId, r.recipient, amount, false);
                 }
                 distributed += amount;
-                if (amount > 0) {
-                    IERC20(config.usdcToken).safeTransfer(splits[i].recipient, amount);
-                    emit PaymentDistributed(songId, splits[i].recipient, amount, false);
-                }
+                unchecked { ++i; }
             }
         }
     }
 
     /// @dev Credit TORT to collector's shell. Uses try/catch so shell issues never block mints.
-    function _creditShell(uint256 songId, address recipient, uint256 quantity) internal {
-        if (config.tortoiseShell == address(0)) return;
+    function _creditShell(
+        uint256 songId,
+        address recipient,
+        uint256 quantity,
+        address shell
+    ) internal {
+        if (shell == address(0)) return;
 
-        try ITortoiseShell(config.tortoiseShell).creditStake(recipient, quantity) returns (uint256 credited) {
+        try ITortoiseShell(shell).creditStake(recipient, quantity) returns (uint256 credited) {
             emit StakeCredited(songId, recipient, quantity, credited);
         } catch (bytes memory reason) {
             emit ShellCreditFailed(songId, recipient, quantity, reason);

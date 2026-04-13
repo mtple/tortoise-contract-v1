@@ -20,8 +20,8 @@ contract MintToShellTest is Test {
     address public buyer2 = makeAddr("buyer2");
     address public staker = makeAddr("staker");
 
-    uint128 constant PLATFORM_FEE = 50_000;
-    uint128 constant STAKING_FEE = 100_000;
+    uint64 constant PLATFORM_FEE = 50_000;
+    uint64 constant STAKING_FEE = 100_000;
     uint128 constant DEFAULT_PRICE = 850_000;
     uint256 constant TORT_PER_COLLECTION = 10e18;
     uint256 constant REWARD_DURATION = 604_800;

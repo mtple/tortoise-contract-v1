@@ -22,8 +22,8 @@ contract TortoiseV1Test is Test {
     address public collab1 = makeAddr("collab1");
     address public collab2 = makeAddr("collab2");
 
-    uint128 public constant PLATFORM_FEE = 50_000; // $0.05
-    uint128 public constant STAKING_FEE = 100_000; // $0.10
+    uint64 public constant PLATFORM_FEE = 50_000; // $0.05
+    uint64 public constant STAKING_FEE = 100_000; // $0.10
     uint128 public constant DEFAULT_PRICE = 850_000; // $0.85
     uint256 public constant TORT_PER_COLLECTION = 10e18;
 

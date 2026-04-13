@@ -21,8 +21,8 @@ contract TortoiseV1ForkTest is Test {
     address public artist = makeAddr("artist");
     address public buyer = makeAddr("buyer");
 
-    uint128 constant PLATFORM_FEE = 50_000; // $0.05
-    uint128 constant STAKING_FEE = 100_000; // $0.10
+    uint64 constant PLATFORM_FEE = 50_000; // $0.05
+    uint64 constant STAKING_FEE = 100_000; // $0.10
     uint128 constant DEFAULT_PRICE = 850_000; // $0.85
     uint256 constant TORT_PER_COLLECTION = 777_777e18;
 
