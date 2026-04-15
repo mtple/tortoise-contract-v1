@@ -380,13 +380,21 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         // receiver callback cannot observe or manipulate mid-mint state.
         uint256 scaledPlatformFee = uint256(cfg.platformFee) * quantity;
         uint256 scaledStakingFee = uint256(cfg.stakingFee) * quantity;
-        _distributePayments(songId, quantity, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
-        _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
+        bool feeForwarded = _distributePayments(songId, quantity, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
+        // Only credit TORT when the staking fee was actually forwarded to Shell.
+        // Guards both the pool-insufficient path (fee orphaned to platformFeesAccrued)
+        // and the zero-fee misconfiguration path (stakingFee == 0 with funded pool).
+        if (feeForwarded) {
+            _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
+        }
         _mint(actualRecipient, songId, quantity, "");
 
         emit SongMinted(songId, msg.sender, actualRecipient, quantity, totalCost);
     }
 
+    /// @return stakingFeeForwarded true iff the staking fee was actually transferred to Shell
+    /// and Shell.depositRewards was attempted (regardless of try/catch outcome). Used by
+    /// _processMint to gate _creditShell so TORT credit only flows when USDC did.
     function _distributePayments(
         uint256 songId,
         uint256 quantity,
@@ -394,7 +402,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         uint256 platformFeeAmount, // pre-scaled by quantity
         uint256 stakingFeeAmount,  // pre-scaled by quantity
         ContractConfig memory cfg
-    ) internal {
+    ) internal returns (bool stakingFeeForwarded) {
         IERC20 usdc = IERC20(cfg.usdcToken);
 
         // 1. Platform fee — held in contract, withdrawn by owner
@@ -407,6 +415,8 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         // Checking rate > 0 catches mis-configuration (tortRewardPerCollection not set).
         // Checking pool >= required prevents partial credit where collector pays full fee
         // but receives less TORT than expected (audit-7 findings 2 + 7).
+        // stakingFeeForwarded is set true only in the branch where USDC actually reaches Shell,
+        // so _processMint can gate _creditShell on the same condition (audit-9 findings 1 + 2).
         if (stakingFeeAmount > 0 && cfg.tortoiseShell != address(0)) {
             ITortoiseShell shell = ITortoiseShell(cfg.tortoiseShell);
             uint256 rate = shell.tortRewardPerCollection();
@@ -421,6 +431,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
                     // balanceOf - totalRewardsDeposited reconciliation mechanism.
                     emit StakingFeeAbsorbed(songId, stakingFeeAmount, reason);
                 }
+                stakingFeeForwarded = true;
             } else {
                 // Pool insufficient or rate unset — orphan fee accrues as platform revenue.
                 platformFeesAccrued += stakingFeeAmount;

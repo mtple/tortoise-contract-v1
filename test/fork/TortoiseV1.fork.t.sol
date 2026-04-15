@@ -74,15 +74,16 @@ contract TortoiseV1ForkTest is Test {
         // Verify NFT balance
         assertEq(tortoise.balanceOf(buyer, songId), 3);
 
-        // Verify USDC payments
-        uint256 expectedTotal = (uint256(DEFAULT_PRICE) * 3) + PLATFORM_FEE + STAKING_FEE;
+        // Verify USDC payments — cost formula: (price + platformFee + stakingFee) * quantity
+        uint256 Q = 3;
+        uint256 expectedTotal = (uint256(DEFAULT_PRICE) + PLATFORM_FEE + STAKING_FEE) * Q;
         assertEq(buyerUsdcBefore - IERC20(USDC).balanceOf(buyer), expectedTotal);
-        assertEq(IERC20(USDC).balanceOf(artist) - artistUsdcBefore, uint256(DEFAULT_PRICE) * 3);
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)) - contractUsdcBefore, PLATFORM_FEE);
-        assertEq(IERC20(USDC).balanceOf(address(shell)) - shellUsdcBefore, STAKING_FEE);
+        assertEq(IERC20(USDC).balanceOf(artist) - artistUsdcBefore, uint256(DEFAULT_PRICE) * Q);
+        assertEq(IERC20(USDC).balanceOf(address(tortoise)) - contractUsdcBefore, uint256(PLATFORM_FEE) * Q);
+        assertEq(IERC20(USDC).balanceOf(address(shell)) - shellUsdcBefore, uint256(STAKING_FEE) * Q);
 
         // Only platform fee held in tortoise
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)), PLATFORM_FEE);
+        assertEq(IERC20(USDC).balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * Q);
 
         // Verify TORT crediting
         assertEq(shell.stakedBalance(buyer), 3 * TORT_PER_COLLECTION);
@@ -141,14 +142,16 @@ contract TortoiseV1ForkTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, 2, buyer);
 
-        uint256 artistRevenue = 1_000_000 * 2; // $2.00
+        // artistRevenue = price * qty only (platformFee + stakingFee are deducted)
+        uint256 Q = 2;
+        uint256 artistRevenue = 1_000_000 * Q;
         uint256 expectedArtist = (artistRevenue * 7000) / 10_000;
         uint256 expectedCollab = artistRevenue - expectedArtist;
 
         assertEq(IERC20(USDC).balanceOf(artist), expectedArtist);
         assertEq(IERC20(USDC).balanceOf(collab), expectedCollab);
-        // Only platform fee held in contract
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)), PLATFORM_FEE);
+        // Platform fee scales with quantity
+        assertEq(IERC20(USDC).balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * Q);
     }
 
     /// @dev Full lifecycle: stake TORT → collect song → earn USDC → exit

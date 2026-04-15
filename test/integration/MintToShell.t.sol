@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.34;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, Vm, console} from "forge-std/Test.sol";
 import {TortoiseV1} from "../../src/TortoiseV1.sol";
 import {TortoiseShell} from "../../src/TortoiseShell.sol";
 import {SplitRecipient} from "../../src/libraries/SplitLib.sol";
@@ -155,28 +155,34 @@ contract MintToShellTest is Test {
         assertEq(platformHeld, PLATFORM_FEE * 2);
     }
 
+    /// @dev With pool exhausted, the sufficiency gate fails and _creditShell is never
+    /// called — neither StakeCredited nor ShellCreditFailed fires (audit-9 finding #1).
+    /// Mint still completes; buyer gets the NFT; pool remains untouched.
     function test_shellCreditFailure_mintStillSucceeds() public {
         // Drain the TORT pool
         shell.withdrawTortPool(50_000e18);
         assertEq(shell.tortPool(), 0);
-        // Set high reward per collection so creditStake would want more than available
-        shell.setTortRewardPerCollection(1_000_000e18);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");
 
-        // Expect StakeCredited with creditedAmount == 0 (honest signal for pool-exhausted).
-        // Shell's creditStake returns 0 gracefully; V1 emits the real credited amount.
-        vm.expectEmit(true, true, false, true, address(tortoise));
-        emit TortoiseV1.StakeCredited(songId, buyer1, 1, 0);
-
+        vm.recordLogs();
         vm.prank(buyer1);
         tortoise.mintSong(songId, 1, buyer1);
 
+        // No credit events should fire — _creditShell is gated on feeForwarded.
+        bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
+        bytes32 failedTopic = keccak256("ShellCreditFailed(uint256,address,uint256,bytes)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire");
+            assertNotEq(logs[i].topics[0], failedTopic, "ShellCreditFailed must not fire");
+        }
+
         assertEq(tortoise.balanceOf(buyer1, songId), 1);
-        assertEq(shell.stakedBalance(buyer1), 0); // No TORT credited (pool empty)
-        assertEq(shell.tortPool(), 0); // Pool still empty
-        assertEq(shell.totalTortCredited(), 0); // Nothing was credited
+        assertEq(shell.stakedBalance(buyer1), 0);
+        assertEq(shell.tortPool(), 0);
+        assertEq(shell.totalTortCredited(), 0);
     }
 
     function test_collectAndStake_flywheel() public {

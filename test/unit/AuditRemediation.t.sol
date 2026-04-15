@@ -166,31 +166,29 @@ contract AuditRemediationTest is Test {
         assertEq(shell.stakedBalance(buyer), TORT_PER_COLLECTION);
     }
 
-    /// @dev When stakingFee == 0, V1 skips depositRewards entirely, so
-    /// removing shell authorization surfaces only through creditStake's
-    /// try/catch. This is the only path where ShellCreditFailed fires
-    /// purely from auth revocation, because V1 calls depositRewards
-    /// without try/catch (mint would revert otherwise).
+    /// @dev When stakingFee == 0, _distributePayments never forwards the fee so
+    /// feeForwarded == false and _creditShell is never called. Neither StakeCredited
+    /// nor ShellCreditFailed should fire — the pool is fully protected (audit-9 Finding #2).
     function test_creditShell_emitsFailureWhenAuthorizationRevokedZeroStakingFee() public {
-        tortoise.updateStakingFee(0); // skip depositRewards path
+        tortoise.updateStakingFee(0);
         uint256 songId = _createSong();
 
         shell.removeAuthorizedCaller(address(tortoise));
-        uint256 stakedBefore = shell.stakedBalance(buyer);
+        uint256 poolBefore = shell.tortPool();
 
         vm.recordLogs();
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        bool sawFailed;
+        bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
         bytes32 failedTopic = keccak256("ShellCreditFailed(uint256,address,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == failedTopic) sawFailed = true;
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire");
+            assertNotEq(logs[i].topics[0], failedTopic, "ShellCreditFailed must not fire");
         }
-        assertTrue(sawFailed, "expected ShellCreditFailed");
         assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT should still mint");
-        assertEq(shell.stakedBalance(buyer), stakedBefore, "no credit");
+        assertEq(shell.tortPool(), poolBefore, "pool must not be drained");
     }
 
     /// @dev With stakingFee > 0 and auth revoked, depositRewards is now wrapped in
@@ -215,39 +213,29 @@ contract AuditRemediationTest is Test {
         assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT should still mint");
     }
 
+    /// @dev With pool exhausted, the sufficiency gate in _distributePayments fails,
+    /// feeForwarded == false, and _creditShell is never called. Neither StakeCredited
+    /// nor ShellCreditFailed fires — the drained pool cannot be further debited
+    /// (audit-9 Finding #1 closes the pool-drain vector).
     function test_creditShell_emitsHonestSignalWhenPoolExhausted() public {
         uint256 songId = _createSong();
 
-        // Drain the TORT pool
         shell.withdrawTortPool(50_000e18);
         assertEq(shell.tortPool(), 0);
 
-        // Shell.creditStake returns 0 silently when pool is empty.
-        // V1's StakeCredited event now carries the real credited amount, so
-        // indexers can distinguish full / partial / zero credit from one event.
         vm.recordLogs();
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bool sawCredited;
-        bool sawFailed;
-        uint256 decodedQuantity;
-        uint256 decodedCredited;
         bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
         bytes32 failedTopic = keccak256("ShellCreditFailed(uint256,address,uint256,bytes)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == creditedTopic) {
-                sawCredited = true;
-                (decodedQuantity, decodedCredited) = abi.decode(logs[i].data, (uint256, uint256));
-            }
-            if (logs[i].topics[0] == failedTopic) sawFailed = true;
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when pool is exhausted");
+            assertNotEq(logs[i].topics[0], failedTopic, "ShellCreditFailed must not fire");
         }
-        assertTrue(sawCredited, "StakeCredited should fire (non-blocking path)");
-        assertFalse(sawFailed, "ShellCreditFailed should not fire on silent no-op");
-        assertEq(decodedQuantity, 1, "quantity reflects requested mint");
-        assertEq(decodedCredited, 0, "credited amount is 0 - pool was empty");
-        assertEq(shell.stakedBalance(buyer), 0, "buyer got no TORT stake");
+        assertEq(shell.tortPool(), 0, "pool remains at zero");
+        assertEq(shell.stakedBalance(buyer), 0, "buyer gets no stake");
     }
 
     // ==========================================================
@@ -1129,5 +1117,112 @@ contract AuditRemediationTest is Test {
         vm.prank(artist);
         vm.expectRevert("Split to USDC token");
         tortoise.configureSplits(songId, splits);
+    }
+
+    // ==========================================================
+    // Audit #9 — Findings 1+2: _creditShell gated on feeForwarded
+    // ==========================================================
+
+    /// @dev Pool has fewer TORT than quantity × rate — staking fee is orphaned to
+    /// platformFeesAccrued. _creditShell must NOT fire (pool would be drained without
+    /// any USDC flowing to stakers).
+    function test_creditShell_skippedWhenPoolInsufficient() public {
+        // Fund pool with exactly 1 unit — mint quantity 2 requires 2 units.
+        shell.withdrawTortPool(shell.tortPool());
+        tort.mint(owner, TORT_PER_COLLECTION);
+        tort.approve(address(shell), TORT_PER_COLLECTION);
+        shell.fundTortPool(TORT_PER_COLLECTION); // pool = 1 × rate, quantity = 2
+
+        uint256 poolBefore = shell.tortPool();
+        uint256 songId = _createSong();
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 2, buyer);
+
+        // No StakeCredited event — credit was skipped.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire");
+        }
+
+        // TORT pool must be untouched.
+        assertEq(shell.tortPool(), poolBefore, "pool must not be drained");
+        // Buyer receives no staked TORT.
+        assertEq(shell.stakedBalance(buyer), 0, "buyer must not receive stake");
+    }
+
+    /// @dev rate == 0 — staking fee orphaned, credit must be skipped.
+    function test_creditShell_skippedWhenRateIsZero() public {
+        TortoiseShell freshShell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
+        TortoiseV1 freshV1 = new TortoiseV1(
+            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(freshShell), STAKING_FEE
+        );
+        freshShell.addAuthorizedCaller(address(freshV1));
+        // Fund pool but leave tortRewardPerCollection == 0.
+        tort.mint(owner, 1000e18);
+        tort.approve(address(freshShell), 1000e18);
+        freshShell.fundTortPool(1000e18);
+
+        uint256 poolBefore = freshShell.tortPool();
+
+        vm.prank(artist);
+        uint256 songId = freshV1.createSong("r", 0, 0, "ipfs://r");
+        usdc.mint(buyer, 1_000_000e6);
+        vm.prank(buyer);
+        usdc.approve(address(freshV1), type(uint256).max);
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        freshV1.mintSong(songId, 1, buyer);
+
+        bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when rate is zero");
+        }
+
+        assertEq(freshShell.tortPool(), poolBefore, "pool must not be touched when rate is zero");
+    }
+
+    /// @dev stakingFee == 0 with a funded pool — free-TORT drain path (Finding #2).
+    /// _creditShell must NOT fire.
+    function test_creditShell_skippedWhenStakingFeeIsZero() public {
+        tortoise.updateStakingFee(0);
+        assertEq(tortoise.getConfig().stakingFee, 0);
+        assertGt(shell.tortPool(), 0, "pool should be funded");
+
+        uint256 poolBefore = shell.tortPool();
+        uint256 songId = _createSong();
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when stakingFee is zero");
+        }
+
+        assertEq(shell.tortPool(), poolBefore, "pool must not be drained when stakingFee is zero");
+        assertEq(shell.stakedBalance(buyer), 0, "buyer must not receive free stake");
+    }
+
+    /// @dev Normal funded path — StakeCredited still fires (regression guard).
+    function test_creditShell_firedWhenFeeForwarded() public {
+        uint256 songId = _createSong();
+        assertGt(shell.tortPool(), 0);
+        assertGt(shell.tortRewardPerCollection(), 0);
+        assertGt(tortoise.getConfig().stakingFee, 0);
+
+        uint256 poolBefore = shell.tortPool();
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        assertEq(shell.stakedBalance(buyer), TORT_PER_COLLECTION, "buyer should receive TORT credit");
+        assertLt(shell.tortPool(), poolBefore, "pool should be debited");
     }
 }
