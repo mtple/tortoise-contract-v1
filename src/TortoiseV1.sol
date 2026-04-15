@@ -18,6 +18,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     // ============ Constants ============
 
     uint256 public constant MAX_MINT_QUANTITY = 100_000;
+    uint256 public constant REROUTE_DELAY = 90 days;
     uint64 public constant MAX_PLATFORM_FEE = 1_000_000;
     uint64 public constant MAX_STAKING_FEE = 1_000_000;
     uint128 public constant MIN_SONG_PRICE = 100_000; // $0.10 minimum
@@ -33,6 +34,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     mapping(address => uint256[]) public artistSongs;
     uint256 public nextSongId;
     mapping(uint256 => mapping(address => uint256)) public pendingClaims;
+    mapping(uint256 => mapping(address => uint256)) public pendingClaimDeferredAt;
     uint256 public platformFeesAccrued;
 
     string private constant _name = "Tortoise";
@@ -60,7 +62,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         uint256 indexed songId, address indexed recipient, uint256 amount, bool isPlatformFee
     );
     event StakingFeeDistributed(uint256 indexed songId, uint256 amount);
-    event StakingFeeDeferred(uint256 indexed songId, uint256 amount, bytes reason);
+    event StakingFeeAbsorbed(uint256 indexed songId, uint256 amount, bytes reason);
     event StakeCredited(
         uint256 indexed songId,
         address indexed recipient,
@@ -80,6 +82,12 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     event TortoiseShellUpdated(address indexed oldShell, address indexed newShell);
     event TokensRecovered(address indexed token, address indexed to, uint256 amount);
     event SplitPaymentDeferred(uint256 indexed songId, address indexed recipient, uint256 amount);
+    event PendingClaimRerouted(
+        uint256 indexed songId,
+        address indexed oldRecipient,
+        address indexed newRecipient,
+        uint256 amount
+    );
 
     // ============ Constructor ============
 
@@ -194,8 +202,11 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         require(!song.splitsLocked, "Splits are locked");
 
         splits.validateSplits();
+        address usdcAddr = config.usdcToken;
         delete songSplits[songId];
         for (uint256 i = 0; i < splits.length; i++) {
+            require(splits[i].recipient != address(this), "Split to self");
+            require(splits[i].recipient != usdcAddr, "Split to USDC token");
             songSplits[songId].push(splits[i]);
         }
         emit SplitsConfigured(songId, splits);
@@ -299,12 +310,44 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
     /// @notice Pull-claim for split recipients whose USDC transfer was deferred
     /// (e.g. due to Circle blocklist). Anyone can claim on behalf of any recipient.
+    /// Uses the same low-level call pattern as _transferOrDefer so a still-blocklisted
+    /// recipient does not permanently brick the claim — it restores and reverts instead.
     function claimPending(uint256 songId, address recipient) external nonReentrant {
         uint256 amount = pendingClaims[songId][recipient];
         require(amount > 0, "Nothing to claim");
         pendingClaims[songId][recipient] = 0;
-        IERC20(config.usdcToken).safeTransfer(recipient, amount);
-        emit PaymentDistributed(songId, recipient, amount, false);
+        (bool ok, bytes memory ret) = address(config.usdcToken).call(
+            abi.encodeCall(IERC20.transfer, (recipient, amount))
+        );
+        bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
+        if (transferred) {
+            emit PaymentDistributed(songId, recipient, amount, false);
+        } else {
+            pendingClaims[songId][recipient] = amount; // restore
+            revert("Transfer failed; still claimable");
+        }
+    }
+
+    /// @notice Admin escape for permanently blocklisted claim recipients.
+    /// Requires 90 days to elapse since the claim was first deferred, preventing
+    /// an owner from rerouting funds that could still be claimed normally.
+    function rerouteBlockedClaim(
+        uint256 songId,
+        address oldRecipient,
+        address newRecipient
+    ) external onlyOwner nonReentrant {
+        require(newRecipient != address(0), "Zero recipient");
+        uint256 amount = pendingClaims[songId][oldRecipient];
+        require(amount > 0, "Nothing to reroute");
+        uint256 deferredAt = pendingClaimDeferredAt[songId][oldRecipient];
+        require(block.timestamp >= deferredAt + REROUTE_DELAY, "Too soon");
+        pendingClaims[songId][oldRecipient] = 0;
+        pendingClaimDeferredAt[songId][oldRecipient] = 0;
+        pendingClaims[songId][newRecipient] += amount;
+        if (pendingClaims[songId][newRecipient] == amount) {
+            pendingClaimDeferredAt[songId][newRecipient] = block.timestamp;
+        }
+        emit PendingClaimRerouted(songId, oldRecipient, newRecipient, amount);
     }
 
     // ============ Internal Functions ============
@@ -373,7 +416,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
                 try shell.depositRewards(stakingFeeAmount) {
                     emit StakingFeeDistributed(songId, stakingFeeAmount);
                 } catch (bytes memory reason) {
-                    emit StakingFeeDeferred(songId, stakingFeeAmount, reason);
+                    // USDC was already transferred to Shell. On auth failure the USDC sits in
+                    // Shell and will be absorbed into the next reward period via the
+                    // balanceOf - totalRewardsDeposited reconciliation mechanism.
+                    emit StakingFeeAbsorbed(songId, stakingFeeAmount, reason);
                 }
             } else {
                 // Pool insufficient or rate unset — orphan fee accrues as platform revenue.
@@ -409,13 +455,19 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     /// @dev Attempt USDC transfer; on failure (call reverts or returns false) defer
     /// to pendingClaims so one bad address cannot brick the entire song (Finding 5).
     function _transferOrDefer(uint256 songId, IERC20 usdc, address recipient, uint256 amount) internal {
+        // Guard against zero-code USDC address (e.g. during proxy upgrade).
+        // A call to an empty-code address returns ok=true, ret.length==0 — indistinguishable
+        // from a normal no-return-value success — so we check code length first.
+        require(address(usdc).code.length > 0, "USDC has no code");
         (bool ok, bytes memory ret) = address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
-        // Treat as success only if the call didn't revert AND the ERC20 return value is true
-        // (or absent, for tokens that return nothing).
-        bool transferred = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+        // ret.length >= 32 guards against abi.decode panic on malformed 1-31 byte returns.
+        bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
         if (transferred) {
             emit PaymentDistributed(songId, recipient, amount, false);
         } else {
+            if (pendingClaims[songId][recipient] == 0) {
+                pendingClaimDeferredAt[songId][recipient] = block.timestamp;
+            }
             pendingClaims[songId][recipient] += amount;
             emit SplitPaymentDeferred(songId, recipient, amount);
         }

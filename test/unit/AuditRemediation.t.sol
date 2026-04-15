@@ -206,7 +206,7 @@ contract AuditRemediationTest is Test {
         tortoise.mintSong(songId, 1, buyer); // must NOT revert
 
         bool sawDeferred;
-        bytes32 deferredTopic = keccak256("StakingFeeDeferred(uint256,uint256,bytes)");
+        bytes32 deferredTopic = keccak256("StakingFeeAbsorbed(uint256,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
@@ -924,7 +924,7 @@ contract AuditRemediationTest is Test {
         tortoise.mintSong(songId, 1, buyer); // must NOT revert
 
         bool sawDeferred;
-        bytes32 deferredTopic = keccak256("StakingFeeDeferred(uint256,uint256,bytes)");
+        bytes32 deferredTopic = keccak256("StakingFeeAbsorbed(uint256,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
@@ -965,5 +965,169 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         vm.expectRevert("Slippage: cost exceeds max");
         tortoise.mintSong(songId, 5, buyer, quotedCost);
+    }
+
+    // ==========================================================
+    // Audit #8 — Finding 1 (A): claimPending re-defers on failure
+    // ==========================================================
+
+    function test_claimPending_redeferOnBlocklistFailure() public {
+        uint256 songId = _createSong();
+
+        // Defer a payment to `blocked` via a failed mint transfer.
+        address blocked = makeAddr("blocked8");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(blocked, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE, "claim not deferred");
+
+        // Now attempt claimPending while still blocklisted (transfer returns false).
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.expectRevert("Transfer failed; still claimable");
+        tortoise.claimPending(songId, blocked);
+        vm.clearMockedCalls();
+
+        // Claim must be fully restored after the failed attempt.
+        assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE, "claim must be restored");
+    }
+
+    // ==========================================================
+    // Audit #8 — Finding 1 (B): rerouteBlockedClaim
+    // ==========================================================
+
+    event PendingClaimRerouted(
+        uint256 indexed songId,
+        address indexed oldRecipient,
+        address indexed newRecipient,
+        uint256 amount
+    );
+
+    function _deferClaimFor(uint256 songId, address recipient, uint256 share) internal {
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(recipient, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (recipient, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        assertEq(tortoise.pendingClaims(songId, recipient), share, "setup: claim not deferred");
+    }
+
+    function test_rerouteBlockedClaim_revertsBeforeDelay() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blockedR");
+        address newAddr = makeAddr("newAddr");
+        _deferClaimFor(songId, blocked, DEFAULT_PRICE);
+
+        // Advance less than REROUTE_DELAY.
+        vm.warp(block.timestamp + 89 days);
+
+        vm.expectRevert("Too soon");
+        tortoise.rerouteBlockedClaim(songId, blocked, newAddr);
+    }
+
+    function test_rerouteBlockedClaim_succeedsAfterDelay() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blockedS");
+        address newAddr = makeAddr("newAddrS");
+        _deferClaimFor(songId, blocked, DEFAULT_PRICE);
+
+        vm.warp(block.timestamp + 90 days);
+
+        vm.expectEmit(true, true, true, true, address(tortoise));
+        emit PendingClaimRerouted(songId, blocked, newAddr, DEFAULT_PRICE);
+        tortoise.rerouteBlockedClaim(songId, blocked, newAddr);
+
+        assertEq(tortoise.pendingClaims(songId, blocked), 0, "old claim must be cleared");
+        assertEq(tortoise.pendingClaims(songId, newAddr), DEFAULT_PRICE, "new claim must be set");
+
+        // New recipient can now claim.
+        tortoise.claimPending(songId, newAddr);
+        assertEq(usdc.balanceOf(newAddr), DEFAULT_PRICE, "new recipient should receive funds");
+    }
+
+    function test_rerouteBlockedClaim_revertsZeroRecipient() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blockedZ");
+        _deferClaimFor(songId, blocked, DEFAULT_PRICE);
+
+        vm.warp(block.timestamp + 90 days);
+
+        vm.expectRevert("Zero recipient");
+        tortoise.rerouteBlockedClaim(songId, blocked, address(0));
+    }
+
+    // ==========================================================
+    // Audit #8 — Lead: _transferOrDefer malformed return data
+    // ==========================================================
+
+    function test_transferOrDefer_malformedReturnData() public {
+        uint256 songId = _createSong();
+        address r = makeAddr("splitR");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(r, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        // Mock USDC returning a 1-byte response (malformed — not 0 or 32 bytes).
+        // Before the fix, abi.decode would panic. After the fix, this is treated as
+        // a failed transfer and deferred — mint does NOT revert.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (r, DEFAULT_PRICE)),
+            abi.encodePacked(bytes1(0x01)) // 1 byte, not 32
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer); // must NOT revert or panic
+        vm.clearMockedCalls();
+
+        // Malformed return treated as failure → deferred.
+        assertEq(tortoise.pendingClaims(songId, r), DEFAULT_PRICE, "should be deferred on malformed return");
+    }
+
+    // ==========================================================
+    // Audit #8 — Lead: configureSplits rejects self and USDC
+    // ==========================================================
+
+    function test_configureSplits_rejectsSelfRecipient() public {
+        uint256 songId = _createSong();
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(address(tortoise), 10_000);
+
+        vm.prank(artist);
+        vm.expectRevert("Split to self");
+        tortoise.configureSplits(songId, splits);
+    }
+
+    function test_configureSplits_rejectsUsdcRecipient() public {
+        uint256 songId = _createSong();
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(address(usdc), 10_000);
+
+        vm.prank(artist);
+        vm.expectRevert("Split to USDC token");
+        tortoise.configureSplits(songId, splits);
     }
 }
