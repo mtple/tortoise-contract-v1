@@ -33,6 +33,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     mapping(address => uint256[]) public artistSongs;
     uint256 public nextSongId;
     mapping(uint256 => mapping(address => uint256)) public pendingClaims;
+    uint256 public platformFeesAccrued;
 
     string private constant _name = "Tortoise";
     string private constant _symbol = "TORT";
@@ -59,6 +60,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         uint256 indexed songId, address indexed recipient, uint256 amount, bool isPlatformFee
     );
     event StakingFeeDistributed(uint256 indexed songId, uint256 amount);
+    event StakingFeeDeferred(uint256 indexed songId, uint256 amount, bytes reason);
     event StakeCredited(
         uint256 indexed songId,
         address indexed recipient,
@@ -222,6 +224,22 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         _processMint(songId, quantity, recipient, totalCost, cfg);
     }
 
+    /// @notice Slippage-protected mint. Reverts if the actual cost exceeds maxTotalCost,
+    /// protecting callers with open approvals from admin fee-bump front-runs.
+    function mintSong(
+        uint256 songId,
+        uint256 quantity,
+        address recipient,
+        uint256 maxTotalCost
+    ) external nonReentrant whenNotPaused {
+        _validateMint(songId, quantity);
+        ContractConfig memory cfg = config;
+        uint256 totalCost = (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
+        require(totalCost <= maxTotalCost, "Slippage: cost exceeds max");
+        IERC20(cfg.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
+        _processMint(songId, quantity, recipient, totalCost, cfg);
+    }
+
     // ============ Admin Functions ============
 
     function updatePlatformFee(uint64 newFee) external onlyOwner {
@@ -254,10 +272,11 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     }
 
     function withdrawPlatformFees() external onlyOwner nonReentrant {
-        uint256 balance = IERC20(config.usdcToken).balanceOf(address(this));
-        require(balance > 0, "No fees to withdraw");
-        IERC20(config.usdcToken).safeTransfer(owner(), balance);
-        emit PlatformFeesWithdrawn(owner(), balance);
+        uint256 amount = platformFeesAccrued;
+        require(amount > 0, "No fees to withdraw");
+        platformFeesAccrued = 0;
+        IERC20(config.usdcToken).safeTransfer(owner(), amount);
+        emit PlatformFeesWithdrawn(owner(), amount);
     }
 
     function pause() external onlyOwner {
@@ -318,7 +337,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         // receiver callback cannot observe or manipulate mid-mint state.
         uint256 scaledPlatformFee = uint256(cfg.platformFee) * quantity;
         uint256 scaledStakingFee = uint256(cfg.stakingFee) * quantity;
-        _distributePayments(songId, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
+        _distributePayments(songId, quantity, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
         _creditShell(songId, actualRecipient, quantity, cfg.tortoiseShell);
         _mint(actualRecipient, songId, quantity, "");
 
@@ -327,6 +346,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
     function _distributePayments(
         uint256 songId,
+        uint256 quantity,
         uint256 totalCost,
         uint256 platformFeeAmount, // pre-scaled by quantity
         uint256 stakingFeeAmount,  // pre-scaled by quantity
@@ -336,20 +356,29 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
         // 1. Platform fee — held in contract, withdrawn by owner
         if (platformFeeAmount > 0) {
+            platformFeesAccrued += platformFeeAmount;
             emit PaymentDistributed(songId, address(this), platformFeeAmount, true);
         }
 
-        // 2. Staking fee -> TortoiseShell — only when pool has TORT to credit.
-        // If the pool is empty, skipping the transfer prevents collectors from
-        // paying a stakingFee that yields no TORT credit (Finding 3).
+        // 2. Staking fee -> TortoiseShell — only when pool can fully cover quantity × rate.
+        // Checking rate > 0 catches mis-configuration (tortRewardPerCollection not set).
+        // Checking pool >= required prevents partial credit where collector pays full fee
+        // but receives less TORT than expected (audit-7 findings 2 + 7).
         if (stakingFeeAmount > 0 && cfg.tortoiseShell != address(0)) {
-            bool poolHasFunds = ITortoiseShell(cfg.tortoiseShell).getTortPoolBalance() > 0;
-            if (poolHasFunds) {
+            ITortoiseShell shell = ITortoiseShell(cfg.tortoiseShell);
+            uint256 rate = shell.tortRewardPerCollection();
+            uint256 required = quantity * rate;
+            if (rate > 0 && shell.getTortPoolBalance() >= required) {
                 usdc.safeTransfer(cfg.tortoiseShell, stakingFeeAmount);
-                ITortoiseShell(cfg.tortoiseShell).depositRewards(stakingFeeAmount);
-                emit StakingFeeDistributed(songId, stakingFeeAmount);
+                try shell.depositRewards(stakingFeeAmount) {
+                    emit StakingFeeDistributed(songId, stakingFeeAmount);
+                } catch (bytes memory reason) {
+                    emit StakingFeeDeferred(songId, stakingFeeAmount, reason);
+                }
+            } else {
+                // Pool insufficient or rate unset — orphan fee accrues as platform revenue.
+                platformFeesAccrued += stakingFeeAmount;
             }
-            // If pool is empty, stakingFee stays in contract alongside platform fees.
         }
 
         // 3. Artist revenue = totalCost - platformFee - stakingFee

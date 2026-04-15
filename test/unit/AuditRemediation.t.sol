@@ -193,15 +193,26 @@ contract AuditRemediationTest is Test {
         assertEq(shell.stakedBalance(buyer), stakedBefore, "no credit");
     }
 
-    /// @dev With stakingFee > 0, auth revocation causes depositRewards
-    /// (called directly, not via try/catch) to revert the whole mint.
-    function test_creditShell_wholeMintRevertsWhenShellAuthRevoked() public {
+    /// @dev With stakingFee > 0 and auth revoked, depositRewards is now wrapped in
+    /// try/catch (audit-7 finding 5), so the mint succeeds and emits StakingFeeDeferred
+    /// rather than reverting. The USDC is held in Shell and reconciled on the next
+    /// authorized depositRewards call via the balanceOf-diff mechanism.
+    function test_creditShell_mintSucceedsWhenShellAuthRevokedEmitsDeferred() public {
         uint256 songId = _createSong();
         shell.removeAuthorizedCaller(address(tortoise));
 
+        vm.recordLogs();
         vm.prank(buyer);
-        vm.expectRevert(TortoiseShell.UnauthorizedCaller.selector);
-        tortoise.mintSong(songId, 1, buyer);
+        tortoise.mintSong(songId, 1, buyer); // must NOT revert
+
+        bool sawDeferred;
+        bytes32 deferredTopic = keccak256("StakingFeeDeferred(uint256,uint256,bytes)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
+        }
+        assertTrue(sawDeferred, "expected StakingFeeDeferred");
+        assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT should still mint");
     }
 
     function test_creditShell_emitsHonestSignalWhenPoolExhausted() public {
@@ -294,29 +305,32 @@ contract AuditRemediationTest is Test {
     // Priority 6: withdrawPlatformFees with stray USDC
     // ==========================================================
 
-    function test_withdrawPlatformFees_sweepsStrayUsdc() public {
+    function test_withdrawPlatformFees_onlyWithdrawsAccrued() public {
         uint256 songId = _createSong();
 
         // Mint once → contract holds PLATFORM_FEE only (staking fee was forwarded).
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
-        uint256 feesAfterMint = usdc.balanceOf(address(tortoise));
-        assertEq(feesAfterMint, PLATFORM_FEE, "only platform fee should remain");
+        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE, "only platform fee should remain");
+        assertEq(tortoise.platformFeesAccrued(), PLATFORM_FEE, "accrued tracker must match");
 
-        // Attacker/user sends a donation directly to contract.
+        // Donor sends USDC directly to contract (stray funds).
         address donor = makeAddr("donor");
         usdc.mint(donor, 42e6);
         vm.prank(donor);
         usdc.transfer(address(tortoise), 42e6);
 
+        // Contract holds PLATFORM_FEE + 42e6 but accrued is still PLATFORM_FEE.
         assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE + 42e6);
+        assertEq(tortoise.platformFeesAccrued(), PLATFORM_FEE, "stray USDC must not inflate accrued");
 
         uint256 ownerBefore = usdc.balanceOf(owner);
         tortoise.withdrawPlatformFees();
 
-        // Locks in the H-1 finding: owner sweeps everything, including donation.
-        assertEq(usdc.balanceOf(owner) - ownerBefore, PLATFORM_FEE + 42e6);
-        assertEq(usdc.balanceOf(address(tortoise)), 0);
+        // Owner gets only the tracked platform fee — stray USDC stays in contract.
+        assertEq(usdc.balanceOf(owner) - ownerBefore, PLATFORM_FEE);
+        assertEq(usdc.balanceOf(address(tortoise)), 42e6, "stray USDC remains");
+        assertEq(tortoise.platformFeesAccrued(), 0, "accrued zeroed after withdrawal");
     }
 
     function test_withdrawPlatformFees_revertsWhenZero() public {
@@ -755,5 +769,201 @@ contract AuditRemediationTest is Test {
         vm.prank(artist);
         vm.expectRevert();
         shell.stake(1000e18);
+    }
+
+    // ==========================================================
+    // Audit #7 — Finding 1: platformFeesAccrued tracker
+    // ==========================================================
+
+    function test_withdrawPlatformFees_doesNotSweepPendingClaims() public {
+        uint256 songId = _createSong();
+
+        // Configure a split with a recipient that will have their transfer blocked.
+        address blocked = makeAddr("blocked7");
+        address normal  = makeAddr("normal7");
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient(blocked, 5000);
+        splits[1] = SplitRecipient(normal, 5000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        // Mock the blocked transfer to return false.
+        uint256 blockedShare = DEFAULT_PRICE / 2;
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, blockedShare)),
+            abi.encode(false)
+        );
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        // Pending claim exists for blocked.
+        assertEq(tortoise.pendingClaims(songId, blocked), blockedShare);
+
+        // Owner withdraws platform fees.
+        uint256 ownerBefore = usdc.balanceOf(owner);
+        tortoise.withdrawPlatformFees();
+
+        // Owner received only the accrued platform fee — pending claim USDC untouched.
+        assertEq(usdc.balanceOf(owner) - ownerBefore, PLATFORM_FEE);
+
+        // Blocked recipient can still claim their pending payment.
+        tortoise.claimPending(songId, blocked);
+        assertEq(usdc.balanceOf(blocked), blockedShare, "pending claim still claimable");
+    }
+
+    function test_withdrawPlatformFees_includesOrphanedStakingFee() public {
+        // Drain the tort pool so the staking fee is orphaned into platformFeesAccrued.
+        shell.withdrawTortPool(shell.tortPool());
+        assertEq(shell.tortPool(), 0);
+
+        uint256 songId = _createSong();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+
+        // With pool empty AND rate == 0 (default after drain), staking fee is orphaned.
+        // platformFeesAccrued should hold both platformFee and stakingFee.
+        assertEq(
+            tortoise.platformFeesAccrued(),
+            PLATFORM_FEE + STAKING_FEE,
+            "orphaned staking fee not accrued"
+        );
+
+        uint256 ownerBefore = usdc.balanceOf(owner);
+        tortoise.withdrawPlatformFees();
+        assertEq(usdc.balanceOf(owner) - ownerBefore, PLATFORM_FEE + STAKING_FEE);
+    }
+
+    // ==========================================================
+    // Audit #7 — Findings 2+7: pool-sufficiency gate (quantity × rate)
+    // ==========================================================
+
+    function test_stakingFee_notForwardedWhenPoolInsufficientForQuantity() public {
+        // Fund pool with exactly enough for 1 copy but mint 2.
+        shell.withdrawTortPool(shell.tortPool()); // drain first
+        uint256 oneUnit = TORT_PER_COLLECTION;
+        tort.mint(owner, oneUnit);
+        tort.approve(address(shell), oneUnit);
+        shell.fundTortPool(oneUnit); // pool = 1 × rate, but quantity = 2
+
+        uint256 songId = _createSong();
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 2, buyer);
+
+        // Pool has 1 unit but 2 are required — gate fires, fee stays in V1.
+        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore, "shell should receive nothing");
+        assertEq(
+            tortoise.platformFeesAccrued(),
+            (PLATFORM_FEE + STAKING_FEE) * 2,
+            "both fees should be accrued"
+        );
+    }
+
+    function test_stakingFee_notForwardedWhenRateIsZero() public {
+        // Deploy a fresh shell with rate == 0 (never set).
+        TortoiseShell freshShell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
+        TortoiseV1 freshV1 = new TortoiseV1(
+            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(freshShell), STAKING_FEE
+        );
+        freshShell.addAuthorizedCaller(address(freshV1));
+        // Fund pool but leave tortRewardPerCollection == 0.
+        tort.mint(owner, 1000e18);
+        tort.approve(address(freshShell), 1000e18);
+        freshShell.fundTortPool(1000e18);
+
+        vm.prank(artist);
+        uint256 songId = freshV1.createSong("r", 0, 0, "ipfs://r");
+
+        usdc.mint(buyer, 1_000_000e6);
+        vm.prank(buyer);
+        usdc.approve(address(freshV1), type(uint256).max);
+
+        uint256 shellUsdcBefore = usdc.balanceOf(address(freshShell));
+        vm.prank(buyer);
+        freshV1.mintSong(songId, 1, buyer);
+
+        assertEq(usdc.balanceOf(address(freshShell)), shellUsdcBefore, "no USDC when rate is zero");
+        assertEq(freshV1.platformFeesAccrued(), PLATFORM_FEE + STAKING_FEE, "fees accrued");
+    }
+
+    function test_stakingFee_forwardedWhenPoolExactlySufficient() public {
+        // Pool has exactly quantity × rate — gate should pass.
+        shell.withdrawTortPool(shell.tortPool());
+        uint256 needed = TORT_PER_COLLECTION * 3;
+        tort.mint(owner, needed);
+        tort.approve(address(shell), needed);
+        shell.fundTortPool(needed);
+
+        uint256 songId = _createSong();
+        uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 3, buyer);
+
+        assertEq(
+            usdc.balanceOf(address(shell)) - shellUsdcBefore,
+            STAKING_FEE * 3,
+            "staking fee should be forwarded"
+        );
+    }
+
+    // ==========================================================
+    // Audit #7 — Finding 5: depositRewards wrapped in try/catch
+    // ==========================================================
+
+    function test_depositRewards_mintSucceedsWhenShellUnauthorized() public {
+        uint256 songId = _createSong();
+        shell.removeAuthorizedCaller(address(tortoise));
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer); // must NOT revert
+
+        bool sawDeferred;
+        bytes32 deferredTopic = keccak256("StakingFeeDeferred(uint256,uint256,bytes)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
+        }
+        assertTrue(sawDeferred, "expected StakingFeeDeferred event");
+        assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT must still mint");
+    }
+
+    // ==========================================================
+    // Audit #7 — Finding 3: slippage-protected mintSong overload
+    // ==========================================================
+
+    function test_mintSong_slippage_revertsWhenCostExceedsMax() public {
+        uint256 songId = _createSong();
+        uint256 actualCost = tortoise.calculateTotalCost(songId, 1);
+
+        vm.prank(buyer);
+        vm.expectRevert("Slippage: cost exceeds max");
+        tortoise.mintSong(songId, 1, buyer, actualCost - 1);
+    }
+
+    function test_mintSong_slippage_succeedsAtExactMax() public {
+        uint256 songId = _createSong();
+        uint256 actualCost = tortoise.calculateTotalCost(songId, 1);
+
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer, actualCost); // exact cap — must succeed
+        assertEq(tortoise.balanceOf(buyer, songId), 1);
+    }
+
+    function test_mintSong_slippage_protectsAgainstFeeIncrease() public {
+        uint256 songId = _createSong();
+        uint256 quotedCost = tortoise.calculateTotalCost(songId, 5);
+
+        // Simulate admin bumping platform fee before mint executes.
+        tortoise.updatePlatformFee(500_000); // $0.50 vs original $0.05
+
+        vm.prank(buyer);
+        vm.expectRevert("Slippage: cost exceeds max");
+        tortoise.mintSong(songId, 5, buyer, quotedCost);
     }
 }
