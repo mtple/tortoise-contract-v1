@@ -1220,6 +1220,93 @@ contract AuditRemediationTest is Test {
     }
 
     // ==========================================================
+    // Audit #11 — Item A: claimPending clears deferredAt on success
+    // Audit #11 — Item B: rerouteBlockedClaim rejects self-reroute
+    // ==========================================================
+
+    function test_claimPending_zerosDeferredAtOnSuccess() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blocked11A");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(blocked, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        assertGt(tortoise.pendingClaimDeferredAt(songId, blocked), 0, "deferredAt should be set");
+
+        // Claim succeeds — deferredAt must be zeroed.
+        tortoise.claimPending(songId, blocked);
+        assertEq(tortoise.pendingClaims(songId, blocked), 0);
+        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), 0, "deferredAt must be cleared on successful claim");
+    }
+
+    function test_claimPending_preservesDeferredAtOnFailure() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blocked11AF");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(blocked, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        uint256 deferredAt = tortoise.pendingClaimDeferredAt(songId, blocked);
+        assertGt(deferredAt, 0);
+
+        // Claim fails (still blocklisted) — deferredAt and pendingClaims must be unchanged.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.expectRevert("Transfer failed; still claimable");
+        tortoise.claimPending(songId, blocked);
+        vm.clearMockedCalls();
+
+        assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE, "claim must be preserved");
+        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), deferredAt, "deferredAt must be unchanged on failure");
+    }
+
+    function test_rerouteBlockedClaim_revertsOnSelfReroute() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blocked11B");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(blocked, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        vm.warp(block.timestamp + 90 days);
+
+        vm.expectRevert("Self reroute");
+        tortoise.rerouteBlockedClaim(songId, blocked, blocked);
+    }
+
+    // ==========================================================
     // Audit #9 — Findings 1+2: _creditShell gated on feeForwarded
     // ==========================================================
 

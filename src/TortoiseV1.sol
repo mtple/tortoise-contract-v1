@@ -321,6 +321,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         );
         bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
         if (transferred) {
+            pendingClaimDeferredAt[songId][recipient] = 0;
             emit PaymentDistributed(songId, recipient, amount, false);
         } else {
             pendingClaims[songId][recipient] = amount; // restore
@@ -329,7 +330,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     }
 
     /// @notice Admin escape for permanently blocklisted claim recipients.
-    /// Requires 90 days to elapse since the claim was first deferred, preventing
+    /// Requires 90 days to elapse since the claim was last deferred, preventing
     /// an owner from rerouting funds that could still be claimed normally.
     function rerouteBlockedClaim(
         uint256 songId,
@@ -337,6 +338,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         address newRecipient
     ) external onlyOwner nonReentrant {
         require(newRecipient != address(0), "Zero recipient");
+        require(newRecipient != oldRecipient, "Self reroute");
         uint256 amount = pendingClaims[songId][oldRecipient];
         require(amount > 0, "Nothing to reroute");
         uint256 deferredAt = pendingClaimDeferredAt[songId][oldRecipient];
