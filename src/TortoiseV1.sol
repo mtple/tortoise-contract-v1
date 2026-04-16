@@ -344,9 +344,9 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         pendingClaims[songId][oldRecipient] = 0;
         pendingClaimDeferredAt[songId][oldRecipient] = 0;
         pendingClaims[songId][newRecipient] += amount;
-        if (pendingClaims[songId][newRecipient] == amount) {
-            pendingClaimDeferredAt[songId][newRecipient] = block.timestamp;
-        }
+        // Always refresh — merging into an aged destination must not let admin
+        // immediately reroute the combined balance without another 90-day wait (audit-10).
+        pendingClaimDeferredAt[songId][newRecipient] = block.timestamp;
         emit PendingClaimRerouted(songId, oldRecipient, newRecipient, amount);
     }
 
@@ -429,6 +429,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
                     // USDC was already transferred to Shell. On auth failure the USDC sits in
                     // Shell and will be absorbed into the next reward period via the
                     // balanceOf - totalRewardsDeposited reconciliation mechanism.
+                    // Operator note: if V1 is de-authorized from Shell while stakingFee > 0,
+                    // depositRewards reverts here (StakingFeeAbsorbed) and creditStake reverts
+                    // in _creditShell (ShellCreditFailed). Re-authorize V1 via
+                    // shell.addAuthorizedCaller to restore normal operation.
                     emit StakingFeeAbsorbed(songId, stakingFeeAmount, reason);
                 }
                 stakingFeeForwarded = true;
@@ -476,10 +480,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         if (transferred) {
             emit PaymentDistributed(songId, recipient, amount, false);
         } else {
-            if (pendingClaims[songId][recipient] == 0) {
-                pendingClaimDeferredAt[songId][recipient] = block.timestamp;
-            }
             pendingClaims[songId][recipient] += amount;
+            // Always refresh so fresh deferrals cannot inherit an already-elapsed
+            // timer from an earlier dust deferral (audit-10).
+            pendingClaimDeferredAt[songId][recipient] = block.timestamp;
             emit SplitPaymentDeferred(songId, recipient, amount);
         }
     }

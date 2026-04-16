@@ -1099,6 +1099,106 @@ contract AuditRemediationTest is Test {
     // Audit #8 — Lead: configureSplits rejects self and USDC
     // ==========================================================
 
+    // ==========================================================
+    // Audit #10 — Finding 1: deferredAt always refreshed on new deferral
+    // ==========================================================
+
+    /// @dev Dust deferral at T0 sets timer. 91 days later a large fresh deferral
+    /// arrives — timer must be reset to T0+91d so owner cannot immediately reroute.
+    function test_deferredAt_refreshedOnSubsequentDeferral() public {
+        uint256 songId = _createSong();
+        address blocked = makeAddr("blocked10");
+        SplitRecipient[] memory splits = new SplitRecipient[](1);
+        splits[0] = SplitRecipient(blocked, 10_000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        // First deferral — sets deferredAt = T0.
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        uint256 t0 = block.timestamp;
+        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), t0);
+
+        // Warp 91 days — timer would now be elapsed under the old bug.
+        vm.warp(t0 + 91 days);
+
+        // Second (larger) deferral — must refresh deferredAt to now.
+        usdc.mint(buyer, 10_000e6);
+        vm.prank(buyer);
+        usdc.approve(address(tortoise), type(uint256).max);
+        vm.mockCall(
+            address(usdc),
+            abi.encodeCall(usdc.transfer, (blocked, DEFAULT_PRICE)),
+            abi.encode(false)
+        );
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        // deferredAt must now be T0 + 91 days, not T0.
+        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), t0 + 91 days, "deferredAt not refreshed");
+
+        // Reroute must revert — the fresh 90-day window has not elapsed.
+        vm.expectRevert("Too soon");
+        tortoise.rerouteBlockedClaim(songId, blocked, makeAddr("newAddr10"));
+    }
+
+    /// @dev Rerouting A→B where B already has an aged deferral must refresh B's timer,
+    /// preventing an immediate second reroute B→C.
+    function test_rerouteBlockedClaim_mergeRefreshesDestinationTimer() public {
+        uint256 songId = _createSong();
+        address addrA = makeAddr("addrA");
+        address addrB = makeAddr("addrB");
+        address addrC = makeAddr("addrC");
+
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient(addrA, 5000);
+        splits[1] = SplitRecipient(addrB, 5000);
+        vm.prank(artist);
+        tortoise.configureSplits(songId, splits);
+
+        // Defer both A and B.
+        uint256 halfPrice = DEFAULT_PRICE / 2;
+        vm.mockCall(address(usdc), abi.encodeCall(usdc.transfer, (addrA, halfPrice)), abi.encode(false));
+        vm.mockCall(address(usdc), abi.encodeCall(usdc.transfer, (addrB, halfPrice)), abi.encode(false));
+        vm.prank(buyer);
+        tortoise.mintSong(songId, 1, buyer);
+        vm.clearMockedCalls();
+
+        uint256 t0 = block.timestamp;
+
+        // Warp 91 days — both A and B timers are now elapsed.
+        vm.warp(t0 + 91 days);
+
+        // Reroute A → B (merge into aged B). B's timer must be refreshed to now.
+        tortoise.rerouteBlockedClaim(songId, addrA, addrB);
+        assertEq(
+            tortoise.pendingClaimDeferredAt(songId, addrB),
+            t0 + 91 days,
+            "B's deferredAt must be refreshed after merge"
+        );
+
+        // Immediate second reroute B → C must revert.
+        vm.expectRevert("Too soon");
+        tortoise.rerouteBlockedClaim(songId, addrB, addrC);
+
+        // After another 90 days B → C succeeds.
+        vm.warp(t0 + 91 days + 90 days);
+        tortoise.rerouteBlockedClaim(songId, addrB, addrC);
+        assertEq(tortoise.pendingClaims(songId, addrC), halfPrice * 2, "C should hold merged amount");
+    }
+
+    // ==========================================================
+    // Audit #8 — Lead: configureSplits rejects self and USDC
+    // ==========================================================
+
     function test_configureSplits_rejectsSelfRecipient() public {
         uint256 songId = _createSong();
         SplitRecipient[] memory splits = new SplitRecipient[](1);
