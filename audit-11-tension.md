@@ -353,9 +353,18 @@ forge test -v
 
 ## Status
 
-- **Pass-6 Finding #1 (_transferOrDefer set-when-zero):** BLOCKED pending
-  design review (Option 4). Do not land as a straight fix.
-- **Pass-6 Finding #2 (claimPending clear timer):** LAND NOW (item A).
-- **Pass-6 LEAD (self-reroute guard):** LAND NOW (item B).
-- **Follow-up:** Draft Option 4 implementation plan as `audit-11-followup.md`
-  after design review concludes.
+- **Pass-6 Finding #1 (_transferOrDefer set-when-zero):** REJECTED — accepted
+  tradeoff. Threat model does not include a blocklisted address ever
+  appearing as a song's split recipient (confirmed by protocol owner
+  2026-04-16). Current always-refresh code is the operationally-safer of the
+  two cycle endpoints: the griefing DoS it enables is recoverable via a
+  90-day full-protocol pause, whereas the set-when-zero endpoint allows
+  admin-seize of fresh deferrals with no recovery path. If the threat model
+  ever changes (e.g. the catalog expands to include songs with splits to
+  addresses that could plausibly be sanctioned), revisit by implementing
+  Option 4 (propose/execute timelock) from this doc.
+- **Pass-6 Finding #2 (claimPending clear timer):** LANDED (item A).
+- **Pass-6 LEAD (self-reroute guard):** LANDED (item B).
+- **Follow-up:** None required under current threat model. This file remains
+  as a record of the design tension and the decision path if the threat
+  model changes.

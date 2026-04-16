@@ -34,6 +34,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     uint256 public constant REWARD_SCALAR = 1e12; // Scale 6-decimal USDC to 18 internally
     uint256 public constant MIN_REWARD_DURATION = 1 days;
     uint256 public constant MAX_REWARD_DURATION = 365 days;
+    // Floor below which a deposit pools into _queuedReward instead of extending the
+    // period. Raises the cost of cap-and-extend griefing on rewardRate. Scaled (18-dec).
+    uint256 public constant MIN_REWARD_DEPOSIT = 1e6 * 1e12; // 1 USDC
     uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     mapping(address => uint256) public userRewardPerTokenPaid;
@@ -380,19 +383,26 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             return;
         }
 
-        reward += _queuedReward;
+        // Pool with any previously-queued rewards, then only flush into a rate
+        // recalc if the aggregate crosses MIN_REWARD_DEPOSIT. Sub-threshold flows
+        // stay in _queuedReward and fold into the next qualifying deposit.
+        uint256 pooled = reward + _queuedReward;
+        if (pooled < MIN_REWARD_DEPOSIT) {
+            _queuedReward = pooled;
+            return;
+        }
         _queuedReward = 0;
 
         if (block.timestamp >= periodFinish) {
-            rewardRate = reward / rewardDuration;
+            rewardRate = pooled / rewardDuration;
         } else {
             uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
-            rewardRate = (reward + leftover) / rewardDuration;
+            rewardRate = (pooled + leftover) / rewardDuration;
         }
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + rewardDuration;
-        reservedBalance += reward;
+        reservedBalance += pooled;
     }
 
     function _flushQueuedReward() internal {

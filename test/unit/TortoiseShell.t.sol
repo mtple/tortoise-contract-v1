@@ -798,4 +798,102 @@ contract TortoiseShellTest is Test {
         vm.expectRevert(TortoiseShell.InvalidRewardDuration.selector);
         new TortoiseShell(address(tort), address(usdc), 0);
     }
+
+    // ============ MIN_REWARD_DEPOSIT threshold — rate-dilution griefing guard ============
+
+    /// @dev Sub-threshold deposit must not move rewardRate, periodFinish, or reservedBalance.
+    function test_addReward_subThresholdDepositDoesNotExtendPeriod() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Prime an active period with a qualifying deposit.
+        _depositRewardsAsV1(10e6); // 10 USDC, well above 1 USDC floor
+        uint256 rateBefore = shell.rewardRate();
+        uint256 finishBefore = shell.periodFinish();
+        uint256 reservedBefore = shell.reservedBalance();
+        assertGt(rateBefore, 0, "primer must start a period");
+
+        // Jump mid-period so a leftover would be present under the old logic.
+        vm.warp(block.timestamp + 1 days);
+
+        // Sub-threshold griefing deposit (0.5 USDC < 1 USDC floor).
+        _depositRewardsAsV1(500_000);
+
+        assertEq(shell.rewardRate(), rateBefore, "rate must not change on sub-threshold deposit");
+        assertEq(shell.periodFinish(), finishBefore, "periodFinish must not reset on sub-threshold deposit");
+        assertEq(shell.reservedBalance(), reservedBefore, "reservedBalance must not grow on sub-threshold deposit");
+    }
+
+    /// @dev Accumulated sub-threshold deposits fold into the next qualifying deposit.
+    function test_addReward_accumulatedSubThresholdFlushesOnQualifyingDeposit() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        // Prime period.
+        _depositRewardsAsV1(10e6);
+        uint256 reservedAfterPrimer = shell.reservedBalance();
+
+        // Three sub-threshold deposits totaling 0.9 USDC — still under the 1 USDC floor.
+        _depositRewardsAsV1(300_000);
+        _depositRewardsAsV1(300_000);
+        _depositRewardsAsV1(300_000);
+
+        assertEq(
+            shell.reservedBalance(),
+            reservedAfterPrimer,
+            "sub-threshold-only deposits must not enter reservedBalance"
+        );
+
+        uint256 rateBeforeQualifying = shell.rewardRate();
+
+        // A qualifying deposit (2 USDC) should pull in the 0.9 USDC queued alongside it.
+        _depositRewardsAsV1(2e6);
+
+        // reservedBalance should grow by (queued 0.9 + new 2.0) * REWARD_SCALAR = 2.9e18.
+        assertEq(
+            shell.reservedBalance() - reservedAfterPrimer,
+            2_900_000 * 1e12,
+            "reservedBalance must absorb queued + new on flush"
+        );
+        assertNotEq(shell.rewardRate(), rateBeforeQualifying, "qualifying deposit should recompute rate");
+    }
+
+    /// @dev Stake-after-sub-threshold pulls queued dust into the active period via _flushQueuedReward.
+    function test_addReward_subThresholdQueueFlushedByStake() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        _depositRewardsAsV1(10e6);
+        uint256 reservedAfterPrimer = shell.reservedBalance();
+
+        // Queue 0.7 USDC sub-threshold.
+        _depositRewardsAsV1(700_000);
+        assertEq(shell.reservedBalance(), reservedAfterPrimer, "still queued, no reservedBalance change");
+
+        // Bob stakes — _flushQueuedReward must fold the queued 0.7 USDC into reservedBalance.
+        vm.prank(bob);
+        shell.stake(STAKE_AMOUNT);
+
+        assertEq(
+            shell.reservedBalance() - reservedAfterPrimer,
+            700_000 * 1e12,
+            "stake must flush queued reward into reservedBalance"
+        );
+    }
+
+    /// @dev A deposit equal to MIN_REWARD_DEPOSIT (1 USDC) is accepted (boundary inclusive).
+    function test_addReward_exactlyAtThresholdQualifies() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 reservedBefore = shell.reservedBalance();
+        _depositRewardsAsV1(1e6); // exactly 1 USDC
+
+        assertEq(
+            shell.reservedBalance() - reservedBefore,
+            1e6 * 1e12,
+            "boundary deposit must be treated as qualifying"
+        );
+        assertGt(shell.rewardRate(), 0, "rate must be set by boundary deposit");
+    }
 }
