@@ -13,6 +13,7 @@ contract ShellHandler is Test {
 
     address[] public stakers;
     address public caller;
+    address public owner;
 
     uint256 public totalTortFunded;
 
@@ -24,12 +25,14 @@ contract ShellHandler is Test {
         TortoiseShell _shell,
         MockUSDC _usdc,
         MockTORT _tort,
-        address _caller
+        address _caller,
+        address _owner
     ) {
         shell = _shell;
         usdc = _usdc;
         tort = _tort;
         caller = _caller;
+        owner = _owner;
 
         for (uint256 i = 0; i < 5; i++) {
             address s = address(uint160(0xD000 + i));
@@ -105,6 +108,22 @@ contract ShellHandler is Test {
     function warpTime(uint256 seconds_) external {
         seconds_ = bound(seconds_, 1, 7 days);
         vm.warp(block.timestamp + seconds_);
+    }
+
+    // ----- Phase B: admin / owner surface -----
+
+    /// @dev Pause/unpause toggle. Invariants must hold across both states.
+    /// fundTortPool / withdrawTortPool are intentionally NOT exposed here:
+    /// the existing invariant_tortPoolAccountingConsistent asserts against
+    /// a fixed totalTortFunded captured at setUp, and adding mid-run funding
+    /// would require widening that ghost — out of Phase B's scope budget.
+    function togglePause(uint256 seed) external {
+        vm.prank(owner);
+        if (seed % 2 == 0) {
+            try shell.pause() {} catch {}
+        } else {
+            try shell.unpause() {} catch {}
+        }
     }
 
     function getStakerCount() external view returns (uint256) {

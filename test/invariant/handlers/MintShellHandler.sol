@@ -21,6 +21,7 @@ contract MintShellHandler is Test {
     address[] public actors;
     uint256[] public songIds;
     address public immutable artist;
+    address public immutable owner;
     uint128 public immutable stakingFee;
 
     // Ghost trackers
@@ -35,13 +36,15 @@ contract MintShellHandler is Test {
         TortoiseShell _shell,
         MockUSDC _usdc,
         MockTORT _tort,
-        address _artist
+        address _artist,
+        address _owner
     ) {
         tortoise = _tortoise;
         shell = _shell;
         usdc = _usdc;
         tort = _tort;
         artist = _artist;
+        owner = _owner;
         stakingFee = _tortoise.getConfig().stakingFee;
 
         for (uint256 i = 0; i < 4; i++) {
@@ -133,6 +136,36 @@ contract MintShellHandler is Test {
     function warp(uint256 t) external {
         t = bound(t, 1, 7 days);
         vm.warp(block.timestamp + t);
+    }
+
+    // ----- Phase B: admin surface -----
+
+    /// @dev Pause/unpause the V1 contract. Invariants must hold across both.
+    function toggleV1Pause(uint256 seed) external {
+        vm.prank(owner);
+        if (seed % 2 == 0) {
+            try tortoise.pause() {} catch {}
+        } else {
+            try tortoise.unpause() {} catch {}
+        }
+    }
+
+    /// @dev Pause/unpause the Shell contract. Invariants must hold across both.
+    function toggleShellPause(uint256 seed) external {
+        vm.prank(owner);
+        if (seed % 2 == 0) {
+            try shell.pause() {} catch {}
+        } else {
+            try shell.unpause() {} catch {}
+        }
+    }
+
+    /// @dev Owner withdraws accrued platform fees. Exercises the
+    /// platformFeesAccrued tracker path and the usdcConservation invariant
+    /// (platform fees flow out of V1, don't touch the shell-side ghost).
+    function withdrawPlatformFees() external {
+        vm.prank(owner);
+        try tortoise.withdrawPlatformFees() {} catch {}
     }
 
     // ----- View helpers -----

@@ -42,7 +42,7 @@ contract MintShellInvariantTest is Test {
         tort.approve(address(shell), type(uint256).max);
         shell.fundTortPool(500_000_000e18);
 
-        handler = new MintShellHandler(tortoise, shell, usdc, tort, artist);
+        handler = new MintShellHandler(tortoise, shell, usdc, tort, artist, address(this));
 
         targetContract(address(handler));
     }

@@ -36,7 +36,7 @@ contract TortoiseShellInvariantTest is Test {
         vm.prank(caller);
         usdc.approve(address(shell), type(uint256).max);
 
-        handler = new ShellHandler(shell, usdc, tort, caller);
+        handler = new ShellHandler(shell, usdc, tort, caller, address(this));
 
         targetContract(address(handler));
     }

@@ -40,15 +40,24 @@ contract TortoiseV1InvariantTest is Test {
         targetContract(address(handler));
     }
 
-    /// @dev Invariant: TortoiseV1 USDC balance should only contain accumulated platform fees
-    ///      (platformFee per copy * total quantity minted — fees scale with quantity)
-    function invariant_onlyPlatformFeesInContract() public view {
-        uint256 contractBalance = usdc.balanceOf(address(tortoise));
-        uint256 expectedFees = handler.totalQuantityMinted() * 50_000; // PLATFORM_FEE per copy
-        assertEq(
-            contractBalance,
-            expectedFees,
-            "Contract USDC != accumulated platform fees"
+    /// @dev Invariant: TortoiseV1's USDC balance is always at least the
+    /// owner-withdrawable `platformFeesAccrued`. Any excess is either
+    /// deferred `pendingClaims` or pool-insufficient stakingFee orphans
+    /// (which are themselves accrued into `platformFeesAccrued` by
+    /// _distributePayments, so are already counted).
+    ///
+    /// Note: the earlier `balance == totalQuantityMinted × platformFee`
+    /// formula was too tight — it missed audit-7's pool-insufficient
+    /// orphan path (stakingFee accrues into platformFeesAccrued when the
+    /// TORT pool can't cover quantity × rate) and audit-6's pendingClaims
+    /// path (failed split transfers park USDC under pendingClaims). At
+    /// deep profile (10k/500) the TORT pool exhausts and the orphan path
+    /// fires, surfacing the too-tight formula as a false positive.
+    function invariant_contractBalanceCoversPlatformFees() public view {
+        assertGe(
+            usdc.balanceOf(address(tortoise)),
+            tortoise.platformFeesAccrued(),
+            "Contract USDC < platformFeesAccrued"
         );
     }
 
