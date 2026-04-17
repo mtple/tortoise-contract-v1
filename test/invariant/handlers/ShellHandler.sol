@@ -94,6 +94,14 @@ contract ShellHandler is Test {
         try shell.claimRewards() {} catch {}
     }
 
+    function emergencyWithdraw(uint256 stakerSeed) external {
+        address staker = stakers[stakerSeed % stakers.length];
+        if (shell.stakedBalance(staker) == 0) return;
+
+        vm.prank(staker);
+        try shell.emergencyWithdraw() {} catch {}
+    }
+
     function warpTime(uint256 seconds_) external {
         seconds_ = bound(seconds_, 1, 7 days);
         vm.warp(block.timestamp + seconds_);

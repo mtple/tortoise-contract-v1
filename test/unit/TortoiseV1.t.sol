@@ -469,14 +469,17 @@ contract TortoiseV1Test is Test {
 
         uint256 shellUsdcBefore = usdc.balanceOf(address(shell));
 
+        // Mint 10 copies so stakingFee (10 × 0.1 = 1.0 USDC) meets
+        // MIN_REWARD_DEPOSIT and actually starts a reward period.
+        uint256 qty = 10;
         vm.prank(buyer);
-        tortoise.mintSong(songId, 1, buyer);
+        tortoise.mintSong(songId, qty, buyer);
 
-        // Shell should have received exactly the staking fee
-        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore + STAKING_FEE);
+        // Shell should have received exactly qty × staking fee
+        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore + STAKING_FEE * qty);
         assertGt(shell.rewardRate(), 0);
         // ReservedBalance should track the deposited amount (scaled)
-        assertEq(shell.reservedBalance(), uint256(STAKING_FEE) * shell.REWARD_SCALAR());
+        assertEq(shell.reservedBalance(), uint256(STAKING_FEE) * qty * shell.REWARD_SCALAR());
     }
 
     function test_mintSong_noShellConfigured() public {
@@ -559,6 +562,8 @@ contract TortoiseV1Test is Test {
 
     function test_updateTortoiseShell_rejectsEOA() public {
         address eoa = makeAddr("eoa");
+        // makeAddr can collide with real EIP-7702-delegated addresses on forks.
+        vm.etch(eoa, "");
         vm.expectRevert("Shell must be a contract");
         tortoise.updateTortoiseShell(eoa);
     }

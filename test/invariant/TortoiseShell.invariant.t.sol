@@ -82,4 +82,17 @@ contract TortoiseShellInvariantTest is Test {
             "Shell USDC balance < reserved"
         );
     }
+
+    /// @dev Invariant (audit-12 Finding 1): reservedBalance never exceeds what
+    ///      totalRewardsDeposited can back. Enforces the tighter form of
+    ///      "the contract can pay out everything it claims to reserve" so that
+    ///      accounting bugs on the deposit/forfeit/claim paths surface here
+    ///      rather than silently over-reserving user rewards.
+    function invariant_reservedBalanceDoesNotExceedTotalDeposited() public view {
+        assertLe(
+            shell.reservedBalance(),
+            shell.totalRewardsDeposited() * shell.REWARD_SCALAR(),
+            "reservedBalance > totalRewardsDeposited * REWARD_SCALAR"
+        );
+    }
 }

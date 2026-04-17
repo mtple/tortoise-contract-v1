@@ -273,6 +273,8 @@ contract AuditRemediationTest is Test {
     function test_updateTortoiseShell_rejectsEOA() public {
         // M-04: owner cannot accidentally point V1 at an EOA.
         address eoa = makeAddr("fakeShell");
+        // makeAddr can collide with real EIP-7702-delegated addresses on forks.
+        vm.etch(eoa, "");
         vm.expectRevert("Shell must be a contract");
         tortoise.updateTortoiseShell(eoa);
     }
@@ -327,49 +329,92 @@ contract AuditRemediationTest is Test {
     }
 
     // ==========================================================
-    // Priority 8: emergencyWithdraw forfeit dust accounting
+    // Priority 8: emergencyWithdraw forfeit accounting (audit-12 Finding 1)
     // ==========================================================
 
-    /// @dev When forfeited % REWARD_SCALAR != 0, the remainder is lost
-    /// from totalRewardsDeposited (truncated). Locks in the accepted-
-    /// design behavior so a regression would surface.
-    function test_emergencyWithdraw_truncatesForfeitDustInTotalRewards() public {
-        // Stake
+    /// @dev audit-12 Finding 1: emergencyWithdraw must NOT decrement
+    /// totalRewardsDeposited — no USDC left the contract, so the liability
+    /// is still owed to the pool as a whole. Decrementing would double-count
+    /// the forfeited USDC on the next depositRewards recycle.
+    function test_emergencyWithdraw_preservesTotalRewardsDeposited() public {
         tort.mint(artist, 1000e18);
         vm.prank(artist);
         tort.approve(address(shell), type(uint256).max);
         vm.prank(artist);
         shell.stake(1000e18);
 
-        // Deposit a reward amount that produces non-aligned accrual
-        uint256 rewardAmount = 7; // 7 base units of USDC
+        // Above MIN_REWARD_DEPOSIT so a period actually starts. Non-round
+        // amount keeps the forfeit % REWARD_SCALAR != 0 case exercised.
+        uint256 rewardAmount = 1_000_007; // ~1.000007 USDC
         usdc.mint(owner, rewardAmount);
         usdc.transfer(address(shell), rewardAmount);
         shell.addAuthorizedCaller(owner);
         shell.depositRewards(rewardAmount);
 
-        // Advance partial period to produce forfeited with non-zero remainder
         vm.warp(block.timestamp + 13_337);
 
         uint256 trackedBefore = shell.totalRewardsDeposited();
         uint256 forfeitedExpected = shell.earned(artist);
+        assertGt(forfeitedExpected, 0, "precondition: must have accrued rewards");
 
         vm.prank(artist);
         shell.emergencyWithdraw();
 
-        // Contract reduces totalRewardsDeposited by forfeited / REWARD_SCALAR.
-        uint256 expectedDelta = forfeitedExpected / REWARD_SCALAR;
-        assertEq(trackedBefore - shell.totalRewardsDeposited(), expectedDelta);
+        // Invariant: totalRewardsDeposited is unchanged across emergencyWithdraw.
+        assertEq(
+            shell.totalRewardsDeposited(),
+            trackedBefore,
+            "totalRewardsDeposited must not change on emergencyWithdraw"
+        );
+        // reservedBalance correctly releases the forfeited accrual slot.
+        assertEq(shell.userUnpaidRewards(artist), 0, "forfeit should zero userUnpaidRewards");
+    }
 
-        // Any remainder dust (forfeited % REWARD_SCALAR) is NOT tracked.
-        // This asserts the accepted-behavior truncation: the next depositRewards
-        // call will see balanceOf - totalRewardsDeposited and recycle the
-        // untracked portion (less the already-transferred-out fraction).
-        uint256 remainder = forfeitedExpected % REWARD_SCALAR;
-        // If remainder > 0 we've demonstrated the truncation path.
-        // We don't assert remainder > 0 because it depends on timing; we just
-        // verify the accounting identity holds either way.
-        assertTrue(remainder == forfeitedExpected - expectedDelta * REWARD_SCALAR);
+    /// @dev audit-12 Finding 1 recycle path: after emergencyWithdraw, the
+    /// forfeited USDC is still in the contract; a subsequent depositRewards
+    /// with no new USDC picks it up via balanceOf - totalRewardsDeposited.
+    function test_emergencyWithdraw_forfeitRecyclesViaDepositRewards() public {
+        // Two stakers so emergencyWithdraw doesn't hit the last-staker requeue path.
+        tort.mint(artist, 1000e18);
+        tort.mint(buyer, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(buyer);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(artist);
+        shell.stake(1000e18);
+        vm.prank(buyer);
+        shell.stake(1000e18);
+
+        uint256 rewardAmount = 10e6; // 10 USDC, above MIN_REWARD_DEPOSIT
+        usdc.mint(owner, rewardAmount);
+        usdc.transfer(address(shell), rewardAmount);
+        shell.addAuthorizedCaller(owner);
+        shell.depositRewards(rewardAmount);
+
+        // Let some rewards accrue, then artist forfeits.
+        vm.warp(block.timestamp + 1 days);
+        uint256 forfeitedScaled = shell.earned(artist);
+        assertGt(forfeitedScaled, 0);
+
+        vm.prank(artist);
+        shell.emergencyWithdraw();
+
+        // USDC is still in the contract — nothing left for the forfeit.
+        uint256 shellBal = usdc.balanceOf(address(shell));
+        assertEq(shellBal, rewardAmount, "no USDC should have moved");
+
+        // With the fix, totalRewardsDeposited wasn't decremented, so balanceOf ==
+        // totalRewardsDeposited and depositRewards(0) has nothing to recycle
+        // (that's correct — the forfeited USDC is already accounted-for and will
+        // drip to remaining stakers as the period continues or via the next
+        // qualifying fresh deposit that crosses the reconciliation).
+        shell.depositRewards(0);
+        assertEq(
+            shell.totalRewardsDeposited(),
+            shellBal,
+            "totalRewardsDeposited should equal contract USDC balance (no double-count)"
+        );
     }
 
     // ==========================================================
@@ -648,6 +693,10 @@ contract AuditRemediationTest is Test {
 
     function test_addAuthorizedCaller_revertsForEOA() public {
         address eoa = makeAddr("eoa");
+        // makeAddr derives deterministic addresses that can collide with real
+        // EIP-7702-delegated addresses on mainnet forks. Force no code so the
+        // EOA-check path is the one under test.
+        vm.etch(eoa, "");
         vm.expectRevert("Caller must be a contract");
         shell.addAuthorizedCaller(eoa);
     }
@@ -711,9 +760,11 @@ contract AuditRemediationTest is Test {
         vm.prank(artist);
         shell.stake(1000e18);
 
+        // Mint 10 copies so stakingFee (10 × 0.1 = 1.0 USDC) meets
+        // MIN_REWARD_DEPOSIT and starts a reward period.
         uint256 songId = _createSong();
         vm.prank(buyer);
-        tortoise.mintSong(songId, 1, buyer);
+        tortoise.mintSong(songId, 10, buyer);
         vm.warp(block.timestamp + REWARD_DURATION);
 
         shell.pause();
@@ -731,9 +782,10 @@ contract AuditRemediationTest is Test {
         vm.prank(artist);
         shell.stake(1000e18);
 
+        // See test_claimRewards_worksWhilePaused — 10 copies for above-floor fee.
         uint256 songId = _createSong();
         vm.prank(buyer);
-        tortoise.mintSong(songId, 1, buyer);
+        tortoise.mintSong(songId, 10, buyer);
         vm.warp(block.timestamp + REWARD_DURATION);
 
         shell.pause();
@@ -1411,5 +1463,145 @@ contract AuditRemediationTest is Test {
 
         assertEq(shell.stakedBalance(buyer), TORT_PER_COLLECTION, "buyer should receive TORT credit");
         assertLt(shell.tortPool(), poolBefore, "pool should be debited");
+    }
+
+    // ==========================================================
+    // Audit-12 Finding 2 Part A: _flushQueuedReward floor gate
+    // with aged-queue escape
+    // ==========================================================
+
+    event QueuedRewardFlushed(uint256 amount, uint256 newRewardRate);
+
+    /// @dev Emergency exit late in a period queues a sub-MIN_REWARD_DEPOSIT
+    /// remainder. The next single-wei stake must NOT flush that sub-floor
+    /// dust into a fresh full period — otherwise the cap-and-extend dilution
+    /// shape MIN_REWARD_DEPOSIT was installed to prevent is reintroduced.
+    function test_flushQueuedReward_skipsSubFloorWhenNotAged() public {
+        shell.addAuthorizedCaller(owner);
+        tort.mint(artist, 1000e18);
+        tort.mint(buyer, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(buyer);
+        tort.approve(address(shell), type(uint256).max);
+
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        // Deposit above MIN_REWARD_DEPOSIT so rewardRate is non-zero.
+        uint256 rewardAmount = 10e6; // 10 USDC
+        usdc.mint(owner, rewardAmount);
+        usdc.transfer(address(shell), rewardAmount);
+        shell.depositRewards(rewardAmount);
+
+        // Warp to near periodFinish so remaining drip is sub-floor.
+        uint256 periodFinish = shell.periodFinish();
+        vm.warp(periodFinish - 5); // 5 seconds left
+
+        // Artist emergency-exits: queues ~5 * rewardRate (well under 1 USDC scaled).
+        vm.prank(artist);
+        shell.emergencyWithdraw();
+
+        uint256 rateBefore = shell.rewardRate();
+        assertEq(rateBefore, 0, "rewardRate zeroed by last-staker exit");
+
+        // Buyer stakes a tiny amount — pre-fix, this would flush the sub-floor
+        // queued reward into a fresh full period. Post-fix, flush is skipped.
+        vm.prank(buyer);
+        shell.stake(1e18);
+
+        assertEq(
+            shell.rewardRate(),
+            0,
+            "sub-floor queued reward must not flush into a new period"
+        );
+    }
+
+    /// @dev Same setup, but warp past rewardDuration before re-staking. The
+    /// aged-queue escape hatch must allow the flush so low-activity periods
+    /// don't trap rewards indefinitely.
+    function test_flushQueuedReward_flushesSubFloorAfterAging() public {
+        shell.addAuthorizedCaller(owner);
+        tort.mint(artist, 1000e18);
+        tort.mint(buyer, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(buyer);
+        tort.approve(address(shell), type(uint256).max);
+
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        uint256 rewardAmount = 10e6;
+        usdc.mint(owner, rewardAmount);
+        usdc.transfer(address(shell), rewardAmount);
+        shell.depositRewards(rewardAmount);
+
+        uint256 periodFinish = shell.periodFinish();
+        vm.warp(periodFinish - 5);
+
+        vm.prank(artist);
+        shell.emergencyWithdraw();
+
+        // Warp past rewardDuration so the queue is aged.
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        vm.prank(buyer);
+        shell.stake(1e18);
+
+        // Flush should have activated — rewardRate non-zero again.
+        assertGt(
+            shell.rewardRate(),
+            0,
+            "aged sub-floor queue must flush via the escape hatch"
+        );
+    }
+
+    /// @dev Regression guard: above-floor queued rewards (e.g. deposited while
+    /// totalStaked == 0) must still flush immediately on the next stake — this
+    /// is the audit-8 accepted behavior and must not regress under Part A.
+    function test_flushQueuedReward_flushesImmediatelyWhenAboveFloor() public {
+        shell.addAuthorizedCaller(owner);
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+
+        // Deposit with no stakers → queues above-floor rewards.
+        uint256 rewardAmount = 10e6;
+        usdc.mint(owner, rewardAmount);
+        usdc.transfer(address(shell), rewardAmount);
+        shell.depositRewards(rewardAmount);
+
+        assertEq(shell.rewardRate(), 0, "no rate without stakers");
+
+        // First stake flushes the queue — well above MIN_REWARD_DEPOSIT.
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        assertGt(shell.rewardRate(), 0, "above-floor queue must flush immediately");
+    }
+
+    /// @dev A fresh deposit that itself crosses the floor must still flush
+    /// any previously-queued sub-floor dust — nothing in Part A changes
+    /// _addReward's pooled-flush semantics.
+    function test_addReward_poolsSubFloorThenFlushesOnAboveFloorTopUp() public {
+        shell.addAuthorizedCaller(owner);
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        // Sub-floor deposit (0.5 USDC) — pools into _queuedReward.
+        usdc.mint(owner, 500_000);
+        usdc.transfer(address(shell), 500_000);
+        shell.depositRewards(500_000);
+        assertEq(shell.rewardRate(), 0, "sub-floor deposit must not start a period");
+
+        // Top-up that crosses the floor when pooled (0.6 + 0.5 = 1.1 USDC).
+        usdc.mint(owner, 600_000);
+        usdc.transfer(address(shell), 600_000);
+        shell.depositRewards(600_000);
+        assertGt(shell.rewardRate(), 0, "above-floor pooled sum must flush");
     }
 }

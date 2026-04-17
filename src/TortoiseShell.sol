@@ -39,6 +39,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     uint256 public constant MIN_REWARD_DEPOSIT = 1e6 * 1e12; // 1 USDC
     uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
+    uint256 internal _queuedRewardUpdatedAt; // Timestamp of last _queuedReward mutation; gates sub-floor flush
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public userUnpaidRewards;
 
@@ -159,13 +160,16 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued USDC rewards. Reduce reservedBalance and
-        // totalRewardsDeposited so the forfeited USDC is recycled into future
-        // rewards via depositRewards (which detects balanceOf > totalRewardsDeposited).
+        // Forfeit all accrued USDC rewards. Release the accrual slot
+        // (reservedBalance) so the forfeited USDC is recycled into future
+        // rewards via the next depositRewards (balanceOf - totalRewardsDeposited
+        // picks it up as excess). totalRewardsDeposited is intentionally NOT
+        // decremented: no USDC leaves the contract here, so the liability
+        // remains owed to the reward pool as a whole. Decrementing it would
+        // double-count the recycled USDC on the next deposit.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
-            totalRewardsDeposited -= forfeited / REWARD_SCALAR;
             userUnpaidRewards[msg.sender] = 0;
         }
 
@@ -178,6 +182,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             if (remaining > 0) {
                 _queuedReward += remaining;
+                _queuedRewardUpdatedAt = block.timestamp;
                 reservedBalance -= remaining;
                 rewardRate = 0;
                 periodFinish = block.timestamp;
@@ -347,6 +352,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             if (remaining > 0) {
                 _queuedReward += remaining;
+                _queuedRewardUpdatedAt = block.timestamp;
                 reservedBalance -= remaining;
                 rewardRate = 0;
                 periodFinish = block.timestamp;
@@ -380,6 +386,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         // with totalStaked == 0, so these rewards would be permanently lost.
         if (totalStaked == 0) {
             _queuedReward += reward;
+            _queuedRewardUpdatedAt = block.timestamp;
             return;
         }
 
@@ -389,9 +396,11 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 pooled = reward + _queuedReward;
         if (pooled < MIN_REWARD_DEPOSIT) {
             _queuedReward = pooled;
+            _queuedRewardUpdatedAt = block.timestamp;
             return;
         }
         _queuedReward = 0;
+        _queuedRewardUpdatedAt = 0;
 
         if (block.timestamp >= periodFinish) {
             rewardRate = pooled / rewardDuration;
@@ -408,7 +417,18 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     function _flushQueuedReward() internal {
         uint256 queued = _queuedReward;
         if (queued == 0) return;
+
+        // Mirror _addReward's MIN_REWARD_DEPOSIT floor at the flush boundary —
+        // otherwise sub-floor amounts queued via mid-period exits (emergencyWithdraw
+        // / _withdraw last-staker branch) can be flushed by a single-wei stake into
+        // a full fresh period, reproducing the cap-and-extend dilution shape the
+        // floor is meant to prevent. Aged queues (sat ≥ rewardDuration) escape the
+        // gate so low-activity periods can't trap rewards indefinitely.
+        bool aged = block.timestamp >= _queuedRewardUpdatedAt + rewardDuration;
+        if (queued < MIN_REWARD_DEPOSIT && !aged) return;
+
         _queuedReward = 0;
+        _queuedRewardUpdatedAt = 0;
 
         if (block.timestamp >= periodFinish) {
             rewardRate = queued / rewardDuration;

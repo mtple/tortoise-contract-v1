@@ -66,15 +66,16 @@ contract MintToShellTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Integration Song", 0, 0, "ipfs://test");
 
-        // 3. Buyer1 mints — triggers staking fee deposit + TORT credit
+        // 3. Buyer1 mints 10 copies so stakingFee (10 × 0.1 = 1.0 USDC) meets
+        //    MIN_REWARD_DEPOSIT and actually starts a reward period.
         vm.prank(buyer1);
-        tortoise.mintSong(songId, 1, buyer1);
+        tortoise.mintSong(songId, 10, buyer1);
 
-        // Verify: buyer1 got NFT
-        assertEq(tortoise.balanceOf(buyer1, songId), 1);
+        // Verify: buyer1 got NFTs
+        assertEq(tortoise.balanceOf(buyer1, songId), 10);
 
-        // Verify: buyer1 got TORT credited
-        assertEq(shell.stakedBalance(buyer1), TORT_PER_COLLECTION);
+        // Verify: buyer1 got TORT credited (10 × TORT_PER_COLLECTION)
+        assertEq(shell.stakedBalance(buyer1), 10 * TORT_PER_COLLECTION);
 
         // Verify: shell received staking fee
         assertGt(shell.rewardRate(), 0);
@@ -102,19 +103,21 @@ contract MintToShellTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");
 
-        // Multiple mints over time
+        // Each mint's stakingFee must cross MIN_REWARD_DEPOSIT (1 USDC) on its
+        // own or pooled with previously-queued dust. Use 10-copy mints so each
+        // is exactly at the floor.
         vm.prank(buyer1);
-        tortoise.mintSong(songId, 1, buyer1);
+        tortoise.mintSong(songId, 10, buyer1);
 
         vm.warp(block.timestamp + 1 days);
 
         vm.prank(buyer2);
-        tortoise.mintSong(songId, 3, buyer2);
+        tortoise.mintSong(songId, 15, buyer2);
 
         vm.warp(block.timestamp + 1 days);
 
         vm.prank(buyer1);
-        tortoise.mintSong(songId, 2, buyer1);
+        tortoise.mintSong(songId, 10, buyer1);
 
         // Both buyers and staker should have accumulated rewards
         vm.warp(block.timestamp + REWARD_DURATION);
@@ -193,13 +196,14 @@ contract MintToShellTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");
 
-        // Buyer1 collects — gets TORT credited into shell
+        // Buyer1 collects 10 copies — stakingFee = 10 × 0.1 = 1.0 USDC, at
+        // MIN_REWARD_DEPOSIT so a period starts.
         vm.prank(buyer1);
-        tortoise.mintSong(songId, 5, buyer1);
+        tortoise.mintSong(songId, 10, buyer1);
 
         // Buyer1's TORT in shell
         uint256 buyer1Staked = shell.stakedBalance(buyer1);
-        assertEq(buyer1Staked, 5 * TORT_PER_COLLECTION);
+        assertEq(buyer1Staked, 10 * TORT_PER_COLLECTION);
 
         // Time passes, buyer1 earns USDC from their credited TORT
         vm.warp(block.timestamp + REWARD_DURATION + 1);
@@ -210,6 +214,6 @@ contract MintToShellTest is Test {
         // Buyer1 claims USDC
         vm.prank(buyer1);
         shell.claimRewards();
-        assertGt(usdc.balanceOf(buyer1), 10_000e6 - tortoise.calculateTotalCost(songId, 5));
+        assertGt(usdc.balanceOf(buyer1), 10_000e6 - tortoise.calculateTotalCost(songId, 10));
     }
 }

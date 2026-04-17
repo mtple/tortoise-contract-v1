@@ -67,15 +67,16 @@ contract TortoiseV1ForkTest is Test {
         uint256 contractUsdcBefore = IERC20(USDC).balanceOf(address(tortoise));
         uint256 shellUsdcBefore = IERC20(USDC).balanceOf(address(shell));
 
-        // Buyer mints 3 copies
+        // Buyer mints 10 copies so stakingFee (10 × 0.1 = 1.0 USDC) meets
+        // MIN_REWARD_DEPOSIT and actually starts a reward period.
+        uint256 Q = 10;
         vm.prank(buyer);
-        tortoise.mintSong(songId, 3, buyer);
+        tortoise.mintSong(songId, Q, buyer);
 
         // Verify NFT balance
-        assertEq(tortoise.balanceOf(buyer, songId), 3);
+        assertEq(tortoise.balanceOf(buyer, songId), Q);
 
         // Verify USDC payments — cost formula: (price + platformFee + stakingFee) * quantity
-        uint256 Q = 3;
         uint256 expectedTotal = (uint256(DEFAULT_PRICE) + PLATFORM_FEE + STAKING_FEE) * Q;
         assertEq(buyerUsdcBefore - IERC20(USDC).balanceOf(buyer), expectedTotal);
         assertEq(IERC20(USDC).balanceOf(artist) - artistUsdcBefore, uint256(DEFAULT_PRICE) * Q);
@@ -86,7 +87,7 @@ contract TortoiseV1ForkTest is Test {
         assertEq(IERC20(USDC).balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * Q);
 
         // Verify TORT crediting
-        assertEq(shell.stakedBalance(buyer), 3 * TORT_PER_COLLECTION);
+        assertEq(shell.stakedBalance(buyer), Q * TORT_PER_COLLECTION);
 
         // Verify reward rate updated
         assertGt(shell.rewardRate(), 0);
@@ -106,8 +107,9 @@ contract TortoiseV1ForkTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Reward Song", 0, 0, "ipfs://reward");
 
+        // Mint 10 copies so stakingFee meets MIN_REWARD_DEPOSIT and a period starts.
         vm.prank(buyer);
-        tortoise.mintSong(songId, 1, buyer);
+        tortoise.mintSong(songId, 10, buyer);
 
         // Fast-forward past reward period
         vm.warp(block.timestamp + 604_800 + 1);
@@ -168,12 +170,13 @@ contract TortoiseV1ForkTest is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Lifecycle Song", 0, 0, "ipfs://lifecycle");
 
-        // Buyer collects — gets TORT credited
+        // Buyer collects 10 copies — stakingFee (10 × 0.1 = 1.0 USDC) meets
+        // MIN_REWARD_DEPOSIT, starts a period, and TORT is credited per copy.
         vm.prank(buyer);
-        tortoise.mintSong(songId, 5, buyer);
+        tortoise.mintSong(songId, 10, buyer);
 
         uint256 buyerStaked = shell.stakedBalance(buyer);
-        assertEq(buyerStaked, 5 * TORT_PER_COLLECTION);
+        assertEq(buyerStaked, 10 * TORT_PER_COLLECTION);
 
         // Wait for full reward period
         vm.warp(block.timestamp + 604_800 + 1);

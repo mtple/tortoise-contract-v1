@@ -619,6 +619,8 @@ contract TortoiseShellTest is Test {
 
     function test_addAuthorizedCaller_revertsForEOA() public {
         address eoa = makeAddr("eoa");
+        // makeAddr can collide with real EIP-7702-delegated addresses on forks.
+        vm.etch(eoa, "");
         vm.expectRevert("Caller must be a contract");
         shell.addAuthorizedCaller(eoa);
     }
@@ -858,8 +860,13 @@ contract TortoiseShellTest is Test {
         assertNotEq(shell.rewardRate(), rateBeforeQualifying, "qualifying deposit should recompute rate");
     }
 
-    /// @dev Stake-after-sub-threshold pulls queued dust into the active period via _flushQueuedReward.
-    function test_addReward_subThresholdQueueFlushedByStake() public {
+    /// @dev audit-12 Finding 2 Part A: stake must NOT flush a sub-floor queued
+    /// reward. Previously, any positive queue flushed on the next stake, which
+    /// reintroduces the cap-and-extend dilution shape MIN_REWARD_DEPOSIT guards
+    /// against whenever a prior mid-period exit left a sub-floor remainder on
+    /// the queue. The dust must wait for either (a) a qualifying top-up via
+    /// _addReward or (b) the rewardDuration-long aging escape hatch.
+    function test_addReward_subThresholdQueueNotFlushedByStake() public {
         vm.prank(alice);
         shell.stake(STAKE_AMOUNT);
 
@@ -870,14 +877,14 @@ contract TortoiseShellTest is Test {
         _depositRewardsAsV1(700_000);
         assertEq(shell.reservedBalance(), reservedAfterPrimer, "still queued, no reservedBalance change");
 
-        // Bob stakes — _flushQueuedReward must fold the queued 0.7 USDC into reservedBalance.
+        // Bob stakes — sub-floor queue must remain queued under the Part A gate.
         vm.prank(bob);
         shell.stake(STAKE_AMOUNT);
 
         assertEq(
-            shell.reservedBalance() - reservedAfterPrimer,
-            700_000 * 1e12,
-            "stake must flush queued reward into reservedBalance"
+            shell.reservedBalance(),
+            reservedAfterPrimer,
+            "sub-floor queued reward must NOT flush on stake (Part A floor gate)"
         );
     }
 
