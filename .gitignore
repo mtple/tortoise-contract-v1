@@ -20,6 +20,12 @@ node_modules/
 lcov.info
 coverage/
 
+# Phase B run artifacts (regenerated, not committed)
+coverage.log
+deep-invariant-run.log
+deep-fuzz-run.log
+slither-run.log
+
 # Internal docs
 md/
 

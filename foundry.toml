@@ -26,6 +26,15 @@ runs = 10000
 runs = 512
 depth = 100
 
+[profile.deep.fuzz]
+runs = 10000
+
+[profile.deep.invariant]
+runs = 10000
+depth = 500
+fail_on_revert = false
+show_metrics = true
+
 [rpc_endpoints]
 localhost = "http://127.0.0.1:8545"
 base = "${BASE_RPC_URL}"
