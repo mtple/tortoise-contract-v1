@@ -1604,4 +1604,38 @@ contract AuditRemediationTest is Test {
         shell.depositRewards(600_000);
         assertGt(shell.rewardRate(), 0, "above-floor pooled sum must flush");
     }
+
+    // ==========================================================
+    // Phase B coverage gaps on audit-12 change surface
+    // ==========================================================
+
+    /// @dev _withdraw's last-staker-exit requeue branch (Shell.sol:351-360)
+    /// parallels the emergencyWithdraw requeue. Covered here so the audit-12
+    /// Part A stamp on _queuedRewardUpdatedAt has coverage on the non-emergency
+    /// path too.
+    function test_withdraw_lastStakerExitMidPeriodRequeues() public {
+        shell.addAuthorizedCaller(owner);
+        tort.mint(artist, 1000e18);
+        vm.prank(artist);
+        tort.approve(address(shell), type(uint256).max);
+        vm.prank(artist);
+        shell.stake(1000e18);
+
+        uint256 rewardAmount = 10e6; // above MIN_REWARD_DEPOSIT
+        usdc.mint(owner, rewardAmount);
+        usdc.transfer(address(shell), rewardAmount);
+        shell.depositRewards(rewardAmount);
+
+        // Warp mid-period so rewardRate * (periodFinish - now) > 0.
+        vm.warp(shell.periodFinish() - 1 days);
+        assertGt(shell.rewardRate(), 0);
+
+        // Full non-emergency withdrawal triggers the last-staker branch:
+        // requeue remaining, zero rewardRate, stamp timer.
+        vm.prank(artist);
+        shell.withdraw(1000e18);
+
+        assertEq(shell.rewardRate(), 0, "rewardRate must zero on last-staker exit");
+        assertEq(shell.periodFinish(), block.timestamp, "periodFinish pulled to now");
+    }
 }

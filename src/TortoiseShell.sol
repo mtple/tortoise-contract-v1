@@ -433,6 +433,12 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         if (block.timestamp >= periodFinish) {
             rewardRate = queued / rewardDuration;
         } else {
+            // Defensive branch: symmetric with _addReward's mid-period path.
+            // Under current semantics this is unreachable — every path that
+            // queues rewards either exits the period (pulling periodFinish
+            // to block.timestamp on last-staker exit) or comes from an
+            // above-floor deposit during totalStaked==0 (no active period).
+            // Kept for symmetry and future-proofing.
             uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
             rewardRate = (queued + leftover) / rewardDuration;
