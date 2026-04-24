@@ -6,6 +6,8 @@ In Process should be treated as a Zora-compatible fork or derivative, not canoni
 
 Current assumption: In Process takes no protocol or platform mint fee. The router should therefore expect to receive the full USDC sale price as the payout recipient. If the router receives less than the expected sale price, collection should revert.
 
+The deployed In Process ERC20 minter on Base is a Zora-derived ERC20Minter contract and exposes Zora-style reward configuration functions. Live Base RPC checks show `totalRewardPct() == 0` and `ethRewardAmount() == 0` for the current minter, so the no-fee assumption is correct for the active deployment. The implementation should still keep the full-proceeds invariant and fork-test the live reward config so a future minter/config change fails loudly.
+
 Two Tortoise contracts:
 
 1. **TortoiseMintRouter**: sits between collectors and In Process. Routes USDC payments, distributes revenue, and triggers shell rewards.
@@ -197,6 +199,23 @@ function collect(
 }
 ```
 
+The deployed minter ABI also includes:
+
+```solidity
+function totalRewardPct() external view returns (uint256);
+function ethRewardAmount() external view returns (uint256);
+function getERC20MinterConfig()
+    external
+    view
+    returns (
+        address zoraRewardRecipientAddress,
+        uint256 rewardRecipientPercentage,
+        uint256 ethReward
+    );
+```
+
+These functions do not need to be called in the hot path if the full-proceeds invariant is enforced. They should be used in deployment validation and fork tests to document that the active In Process minter has zero ERC-20 reward percentage and zero ETH reward requirement.
+
 ### Revenue Distribution
 
 ```solidity
@@ -357,6 +376,7 @@ The current TortoiseShell reward math, TORT credit mechanics, pause behavior, an
 - **In Process only:** integrate with verified In Process contracts. Do not assume canonical Zora ERC20Minter reward or referral behavior.
 - **No arbitrary minter:** the router uses an allowlisted In Process minter or sale contract. Do not accept a user-provided minter address.
 - **Full proceeds verification:** after the In Process collect, require router USDC balance to equal pre-collect balance plus `pricePerToken * quantity`. Any protocol fee, transfer slippage, or unexpected payout behavior should revert.
+- **Live no-fee validation:** the current Base In Process minter exposes Zora-style reward config, but live values are `totalRewardPct = 0` and `ethRewardAmount = 0`. Deployment scripts and fork tests should assert those values for the allowlisted minter.
 - **Sale config validation:** require registered song, nonzero quantity, USDC currency, router payout recipient, nonzero price, and `totalCost <= maxTotalCost`.
 - **Shell disabled plus staking fee:** `updateTortoiseShell(address(0))` auto-zeros `stakingFeeBps`, and non-zero staking fee requires a configured shell.
 - **Fee cap:** `platformFeeBps + stakingFeeBps` must be less than `BASIS_POINTS`.
@@ -421,9 +441,10 @@ TortoiseShell:
 ### Fork Tests
 
 - Full flow against real In Process contracts and USDC on a Base mainnet fork.
+- Assert the allowlisted In Process ERC20 minter reports `totalRewardPct() == 0`, `ethRewardAmount() == 0`, and `getERC20MinterConfig().rewardRecipientPercentage == 0`.
 - Migration flow from the old staker.
 
-## In Process Data Confirmed From Repo
+## In Process Data Confirmed From Repo And Base
 
 - **Factory address, Base mainnet:** `0x540C18B7f99b3b599c6FeB99964498931c211858`.
 - **ERC20 minter address, Base mainnet:** `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014`.
@@ -432,7 +453,10 @@ TortoiseShell:
 - **ERC20 collect ABI shape:** call `mint(mintTo, quantity, tokenAddress, tokenId, totalValue, currency, mintReferral, comment)` on the In Process ERC20 minter.
 - **ERC20 approval target:** collectors normally approve the ERC20 minter; in Tortoise flow the router approves the minter after pulling USDC from the collector.
 - **ERC20 mint fee:** SDK cost calculation sets ERC20 `mintFeePerQuantity` to zero and sends no ETH for ERC20 mints.
+- **Live minter ABI:** BaseScan identifies the deployed minter as `ERC20Minter`, a Zora-derived contract with `mint`, `sale`, `totalRewardPct`, `ethRewardAmount`, and `getERC20MinterConfig`.
+- **Live minter fee config:** Base RPC returns `totalRewardPct() == 0`, `ethRewardAmount() == 0`, and `getERC20MinterConfig().rewardRecipientPercentage == 0`.
 - **Open edition max supply:** omit `maxSupply` for unlimited. The SDK default is `18446744073709551615`. Do not use `0` to mean unlimited.
+- **Moment API auth:** the public In Process client calls `POST https://api.inprocess.world/api/moment/create` with JSON content headers and no visible bearer token or API key.
 
 ## Deployment Shape
 
@@ -465,9 +489,9 @@ Validation is mainnet-oriented. There is no required Base Sepolia testing path i
 - **Song price:** $1.00 default, or variable per artist?
 - **TORT reward per collection:** amount TBD.
 - **Initial TORT pool size:** model launch volume against available TORT budget.
-- **No-fee invariant:** confirm with mainnet fork that router receives exactly `pricePerToken * quantity` for ERC-20 collects.
+- **No-fee fork proof:** mainnet fork should prove a full collect leaves the router with exactly `pricePerToken * quantity`; live minter config already reports zero reward pct and zero ETH reward.
 - **Existing v0.3 songs:** re-create on In Process or leave as-is?
-- **In Process API authentication:** backend API key management.
+- **In Process API operations:** confirm whether production usage needs allowlisting, rate-limit handling, or a backend service agreement even though the public client does not show API auth.
 
 ## Reference Addresses
 
