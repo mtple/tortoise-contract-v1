@@ -461,15 +461,24 @@ TortoiseShell:
 ## Deployment Shape
 
 ```text
-1. Deploy TortoiseShell with TORT, USDC, rewardDuration = 604800.
-2. Deploy TortoiseMintRouter with USDC, TortoiseShell, platformFeeRecipient, 500 bps platform fee, and 1000 bps staking fee.
-3. Register TortoiseMintRouter as an authorized caller on TortoiseShell.
-4. Fund the TortoiseShell TORT pool.
-5. Set tortRewardPerCollection.
-6. Update backend so new moments use the router address as `payoutRecipient`.
+1. Move the old TortoiseV1 ERC-1155 contract out of the active `src/` tree into a clearly named legacy archive folder.
+2. Deploy TortoiseShell with TORT, USDC, rewardDuration = 604800.
+3. Deploy TortoiseMintRouter with USDC, TortoiseShell, platformFeeRecipient, 500 bps platform fee, and 1000 bps staking fee.
+4. Register TortoiseMintRouter as an authorized caller on TortoiseShell.
+5. Fund the TortoiseShell TORT pool.
+6. Set tortRewardPerCollection.
+7. Update backend so new moments use the router address as `payoutRecipient`.
 ```
 
 Validation is mainnet-oriented. There is no required Base Sepolia testing path in this plan.
+
+### Legacy Source Archive
+
+The old `TortoiseV1` ERC-1155 contract should not be deleted during implementation. Move it, along with its old interface and obsolete V1-specific deployment/test files, into a top-level folder such as `legacy/v0.3/` or `archive/legacy-v0.3/`.
+
+Do not keep the old contract under `src/legacy/`, because `src/` is the active Foundry source tree and would make the contract look like part of the current deployable system. The active `src/` folder should contain only the contracts needed for the In Process architecture, such as `TortoiseMintRouter`, `TortoiseShell`, shared libraries, and current interfaces.
+
+The archived files are for historical reference and migration reasoning only. New deploy scripts, gas reports, tests, and docs should target `TortoiseMintRouter` and `TortoiseShell`, not `TortoiseV1`.
 
 ## Migration
 
@@ -477,6 +486,7 @@ Validation is mainnet-oriented. There is no required Base Sepolia testing path i
 
 - New songs go through In Process via TortoiseMintRouter.
 - v0.3 NFTs remain on the old contract.
+- The old contract source remains available in the legacy archive folder, but it is no longer part of the active deployment path.
 
 ### From Old Staker/FeePool
 
