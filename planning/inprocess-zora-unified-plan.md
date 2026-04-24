@@ -42,7 +42,7 @@ When an artist uploads a song through the Tortoise UI:
    - `token.salesConfig.currency`: USDC address on Base
    - `token.salesConfig.pricePerToken`: song price in USDC units, for example `1000000` for $1.00
    - `token.payoutRecipient`: TortoiseMintRouter address, not the artist
-   - `token.maxSupply`: `0` for unlimited, or a configured limit
+   - `token.maxSupply`: omit for unlimited, or pass a configured positive limit
 3. In Process deploys or configures the ERC-1155 token with the ERC-20 sale configured.
 4. Tortoise backend stores the `contractAddress` and `tokenId` in Supabase, linked to the song.
 
@@ -53,7 +53,7 @@ Because In Process is expected to take no fee, the router should require the USD
 ### Collection Flow
 
 ```text
-Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTotalCost, mintData)
+Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTotalCost)
   |
   +-- 1. Router queries sale config from the allowlisted In Process minter or sale contract
   |       totalCost = pricePerToken * quantity
@@ -65,7 +65,7 @@ Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTot
   |
   +-- 3. Router approves exact USDC amount to the allowlisted In Process minter
   |
-  +-- 4. Router calls the verified In Process collect or mint function
+  +-- 4. Router calls the allowlisted In Process ERC20 minter
   |       In Process mints NFT to collector
   |       Full sale value must remain with the router after the external call
   |       require(routerBalanceAfter == routerBalanceBefore + totalCost)
@@ -116,7 +116,7 @@ mapping(bytes32 => bool) public splitsLocked;
 address public owner;
 ```
 
-`inProcessMinter` is an allowlisted In Process contract address. The collector should not supply an arbitrary minter address, because the router approves USDC and makes an external call during collection.
+`inProcessMinter` is the allowlisted In Process ERC20 minter address. On Base mainnet this is `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` according to the In Process repo. The collector should not supply an arbitrary minter address, because the router approves USDC and makes an external call during collection.
 
 ### Key Functions
 
@@ -125,8 +125,7 @@ function collect(
     address collection,
     uint256 tokenId,
     uint256 quantity,
-    uint256 maxTotalCost,
-    bytes calldata mintData
+    uint256 maxTotalCost
 ) external nonReentrant whenNotPaused;
 
 function registerSong(
@@ -146,7 +145,7 @@ function lockSplits(address collection, uint256 tokenId) external;
 function updateInProcessMinter(address newMinter) external onlyOwner;
 ```
 
-The final `mintData` shape should be narrowed once the production In Process ABI is verified. Prefer explicit typed arguments over arbitrary bytes if the ABI supports it.
+The router should keep the collector-facing interface narrow. It should call the In Process ERC20 minter directly with zero mint referral and an empty comment unless a later product requirement needs those fields.
 
 ### Collect Flow
 
@@ -155,8 +154,7 @@ function collect(
     address collection,
     uint256 tokenId,
     uint256 quantity,
-    uint256 maxTotalCost,
-    bytes calldata mintData
+    uint256 maxTotalCost
 ) external nonReentrant whenNotPaused {
     bytes32 songKey = keccak256(abi.encodePacked(collection, tokenId));
     require(songArtist[songKey] != address(0), "Song not registered");
@@ -176,7 +174,16 @@ function collect(
 
     usdc.forceApprove(inProcessMinter, totalCost);
 
-    IInProcessMinter(inProcessMinter).collect(collection, tokenId, quantity, msg.sender, mintData);
+    IInProcessERC20Minter(inProcessMinter).mint(
+        msg.sender,
+        quantity,
+        collection,
+        tokenId,
+        totalCost,
+        address(usdc),
+        address(0),
+        ""
+    );
 
     usdc.forceApprove(inProcessMinter, 0);
 
@@ -243,6 +250,8 @@ Song price is set when the moment is created through the In Process API using `s
 Fees are inclusive: they are taken from the sale price, not added on top.
 
 No In Process protocol fee is expected. If the router receives less than the full sale price, the collect reverts.
+
+The In Process SDK models ERC-20 mints with `mintFeePerQuantity = 0`, `totalCostEth = 0`, and `totalPurchaseCost = pricePerToken * quantity`. The router still enforces the full-proceeds invariant on-chain.
 
 Example for a $1.00 sale:
 
@@ -414,6 +423,17 @@ TortoiseShell:
 - Full flow against real In Process contracts and USDC on a Base mainnet fork.
 - Migration flow from the old staker.
 
+## In Process Data Confirmed From Repo
+
+- **Factory address, Base mainnet:** `0x540C18B7f99b3b599c6FeB99964498931c211858`.
+- **ERC20 minter address, Base mainnet:** `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014`.
+- **USDC address, Base mainnet:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
+- **API payout mapping:** `token.payoutRecipient` becomes the ERC20 sale config `fundsRecipient`.
+- **ERC20 collect ABI shape:** call `mint(mintTo, quantity, tokenAddress, tokenId, totalValue, currency, mintReferral, comment)` on the In Process ERC20 minter.
+- **ERC20 approval target:** collectors normally approve the ERC20 minter; in Tortoise flow the router approves the minter after pulling USDC from the collector.
+- **ERC20 mint fee:** SDK cost calculation sets ERC20 `mintFeePerQuantity` to zero and sends no ETH for ERC20 mints.
+- **Open edition max supply:** omit `maxSupply` for unlimited. The SDK default is `18446744073709551615`. Do not use `0` to mean unlimited.
+
 ## Deployment Shape
 
 ```text
@@ -445,12 +465,7 @@ Validation is mainnet-oriented. There is no required Base Sepolia testing path i
 - **Song price:** $1.00 default, or variable per artist?
 - **TORT reward per collection:** amount TBD.
 - **Initial TORT pool size:** model launch volume against available TORT budget.
-- **In Process ABI:** exact production ABI for sale reads and collect/mint calls on Base mainnet.
-- **In Process mainnet address:** confirm the production minter or sale contract address to allowlist in the router.
-- **Payout field mapping:** confirm whether API `token.payoutRecipient` maps on-chain to `payoutRecipient`, `fundsRecipient`, or another field.
 - **No-fee invariant:** confirm with mainnet fork that router receives exactly `pricePerToken * quantity` for ERC-20 collects.
-- **Max supply semantics:** confirm whether `maxSupply: 0` means unlimited, or whether In Process expects another unlimited sentinel.
-- **Collect UX:** decide whether frontend supplies only user-facing collection inputs, or also ABI-specific `mintData`.
 - **Existing v0.3 songs:** re-create on In Process or leave as-is?
 - **In Process API authentication:** backend API key management.
 
@@ -460,6 +475,7 @@ Validation is mainnet-oriented. There is no required Base Sepolia testing path i
 |-------------------|---------|---------|
 | USDC | Base Mainnet | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | TORT | Base Mainnet | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` |
-| In Process | Base Mainnet | `0x540C18B7f99b3b599c6FeB99964498931c211858` |
+| In Process Factory | Base Mainnet | `0x540C18B7f99b3b599c6FeB99964498931c211858` |
+| In Process ERC20 Minter | Base Mainnet | `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` |
 | Staker (old) | Base Mainnet | `0xFb05Da3E5522f95b63AFd4ab77e94540f285a912` |
 | FeePool (old) | Base Mainnet | `0x1e2674743Ad7E352657899B7f38Ec7C7d4C2E518` |
