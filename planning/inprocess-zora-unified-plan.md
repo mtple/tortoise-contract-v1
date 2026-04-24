@@ -266,6 +266,8 @@ Example for five $1.00 copies:
 
 The router uses on-chain per-song splits, reusing the split validation rules from the current Tortoise implementation.
 
+Only the registered artist wallet for a song can configure or lock that song's splits. The owner/backend registers the song and artist address, but split control belongs to the artist wallet after registration.
+
 Split rules:
 
 - Splits are optional.
@@ -274,7 +276,7 @@ Split rules:
 - Minimum allocation is 1% per recipient.
 - Maximum recipient count is 10.
 - Duplicate recipients are rejected.
-- Splits are permanently lockable.
+- Splits are permanently lockable by the registered artist wallet.
 
 Decision: preserve the current contract's one-recipient support. Requiring two recipients would add friction without improving safety; a single recipient at `10_000` bps is a valid split.
 
@@ -449,7 +451,6 @@ Validation is mainnet-oriented. There is no required Base Sepolia testing path i
 - **No-fee invariant:** confirm with mainnet fork that router receives exactly `pricePerToken * quantity` for ERC-20 collects.
 - **Max supply semantics:** confirm whether `maxSupply: 0` means unlimited, or whether In Process expects another unlimited sentinel.
 - **Collect UX:** decide whether frontend supplies only user-facing collection inputs, or also ABI-specific `mintData`.
-- **Split authorization:** owner-only for launch, artist-only, or backend-signed artist authorization.
 - **Existing v0.3 songs:** re-create on In Process or leave as-is?
 - **In Process API authentication:** backend API key management.
 
