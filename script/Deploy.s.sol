@@ -1,42 +1,56 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.34;
 
-import {Script, console} from "forge-std/Script.sol";
-import {TortoiseV1} from "../src/TortoiseV1.sol";
+import {console} from "forge-std/Script.sol";
+import {TortoiseMintRouter} from "../src/TortoiseMintRouter.sol";
 import {TortoiseShell} from "../src/TortoiseShell.sol";
 import {Config} from "./helpers/Config.s.sol";
 
 contract DeployTortoise is Config {
+    uint256 internal constant DEFAULT_REWARD_DURATION = 604_800;
+    uint256 internal constant DEFAULT_PLATFORM_FEE_BPS = 500;
+    uint256 internal constant DEFAULT_STAKING_FEE_BPS = 1000;
+
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint64 platformFee = uint64(vm.envUint("INITIAL_PLATFORM_FEE"));
-        uint128 defaultPrice = uint128(vm.envUint("INITIAL_SONG_PRICE"));
-        uint64 stakingFee = uint64(vm.envUint("INITIAL_STAKING_FEE"));
+        address deployer = vm.addr(deployerPrivateKey);
 
         address usdcAddress = getUsdcAddress();
         address tortAddress = getTortAddress();
+        address inProcessMinter = vm.envOr("IN_PROCESS_ERC20_MINTER", getInProcessMinterAddress());
+        address platformFeeRecipient = vm.envOr("PLATFORM_FEE_RECIPIENT", deployer);
+        uint256 rewardDuration = vm.envOr("REWARD_DURATION", DEFAULT_REWARD_DURATION);
+        uint256 platformFeeBps = vm.envOr("INITIAL_PLATFORM_FEE_BPS", DEFAULT_PLATFORM_FEE_BPS);
+        uint256 stakingFeeBps = vm.envOr("INITIAL_STAKING_FEE_BPS", DEFAULT_STAKING_FEE_BPS);
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Deploy TortoiseShell
-        TortoiseShell shell = new TortoiseShell(tortAddress, usdcAddress, 604_800);
+        TortoiseShell shell = new TortoiseShell(tortAddress, usdcAddress, rewardDuration);
         console.log("TortoiseShell deployed at:", address(shell));
 
-        // 2. Deploy TortoiseV1
-        TortoiseV1 tortoise = new TortoiseV1(
-            usdcAddress, platformFee, defaultPrice, address(shell), stakingFee
+        TortoiseMintRouter router = new TortoiseMintRouter(
+            usdcAddress,
+            inProcessMinter,
+            address(shell),
+            platformFeeRecipient,
+            platformFeeBps,
+            stakingFeeBps
         );
-        console.log("TortoiseV1 deployed at:", address(tortoise));
+        console.log("TortoiseMintRouter deployed at:", address(router));
 
-        // 3. Register TortoiseV1 as authorized caller
-        shell.addAuthorizedCaller(address(tortoise));
-        console.log("TortoiseV1 registered as authorized caller on TortoiseShell");
+        shell.addAuthorizedCaller(address(router));
+        console.log("TortoiseMintRouter registered as authorized caller on TortoiseShell");
 
         vm.stopBroadcast();
 
+        console.log("USDC:", usdcAddress);
+        console.log("TORT:", tortAddress);
+        console.log("In Process ERC20 minter:", inProcessMinter);
+        console.log("Platform fee recipient:", platformFeeRecipient);
+
         // Remaining manual steps:
-        // 4. Fund TortoiseShell TORT pool via fundTortPool()
-        // 5. Set tortRewardPerCollection on TortoiseShell
-        // 6. Set stakingFee on TortoiseV1 (if not set at deploy)
+        // 1. Fund TortoiseShell TORT pool via fundTortPool().
+        // 2. Set tortRewardPerCollection on TortoiseShell.
+        // 3. Update backend so new In Process moments use router as token.payoutRecipient.
     }
 }

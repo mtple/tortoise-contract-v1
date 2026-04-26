@@ -193,7 +193,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit EmergencyWithdraw(msg.sender, amount);
     }
 
-    // ============ Called by TortoiseV1 ============
+    // ============ Called by authorized mint routers ============
 
     function depositRewards(uint256 amount) external onlyAuthorizedCaller updateReward(address(0)) {
         // Calculate actual new USDC from balance vs cumulative deposit tracking.

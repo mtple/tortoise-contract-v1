@@ -51,7 +51,7 @@ contract TortoiseShellTest is Test {
         usdc.approve(address(shell), type(uint256).max);
     }
 
-    /// @dev Simulates TortoiseV1 flow: transfer USDC to shell then call depositRewards
+    /// @dev Simulates router flow: transfer USDC to shell then call depositRewards
     function _depositRewardsAsV1(uint256 amount) internal {
         vm.startPrank(tortoiseV1);
         usdc.transfer(address(shell), amount);

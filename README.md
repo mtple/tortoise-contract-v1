@@ -1,60 +1,63 @@
 # Tortoise v1
 
-Two Solidity contracts for the Tortoise music platform on Base. Collectors pay USDC to mint music NFTs. Revenue splits three ways: artist, platform, and stakers. Collectors automatically receive staked TORT tokens, growing their share of future rewards.
+Solidity contracts for the Tortoise music platform on Base. In Process owns ERC-1155
+creation and mint infrastructure; Tortoise owns the USDC routing, artist splits,
+staking rewards, and collector TORT crediting layer.
 
-## Contracts
+## Active Contracts
 
-### TortoiseV1 (`src/TortoiseV1.sol`)
+### TortoiseMintRouter (`src/TortoiseMintRouter.sol`)
 
-ERC-1155 music NFT collection contract.
+Payment router for In Process ERC-20 collects.
 
-- Artists create songs with configurable per-song pricing
-- Collectors mint with USDC ($1.00 per copy by default: $0.85 artist + $0.05 platform + $0.10 staking)
-- Revenue splits: up to 10 recipients per song, basis points, permanently lockable
-- Platform fees accumulate in the contract, withdrawn by the owner via `withdrawPlatformFees()`
-- Staking fees forwarded to TortoiseShell for 7-day USDC drip to stakers
-- TORT crediting via TortoiseShell on every mint (try/catch so shell issues never block mints)
-- Shell integration can be disabled by setting `tortoiseShell` to `address(0)` (auto-zeros staking fee)
+- Wraps the allowlisted In Process ERC20 minter
+- Pulls USDC from collectors and approves only the exact collect amount
+- Requires the In Process sale currency to be Base USDC
+- Requires the sale `fundsRecipient` to be the router
+- Requires full proceeds after collect: `pricePerToken * quantity`
+- Splits USDC into platform fee, staking fee, and artist revenue
+- Lets only the registered artist configure or lock song splits
+- Defers failed artist/split transfers into pull claims
+- Credits collector TORT through `TortoiseShell` with try/catch
 
 ### TortoiseShell (`src/TortoiseShell.sol`)
 
 Staking contract with USDC rewards and automatic TORT crediting.
 
-- Stake $TORT tokens, earn USDC rewards from collection fees
-- Synthetix-style 7-day drip: each deposit combines with remaining rewards and resets the window
-- Balance-based reward accounting: `depositRewards` reads actual USDC balance rather than trusting caller-provided amounts
-- TORT crediting: fixed TORT per copy collected, moved from pre-funded pool into collector's staked balance
-- Graceful degradation: `creditStake` never reverts (caps to available pool, no-ops if empty)
-- Emergency withdraw: get TORT back, forfeit unclaimed USDC
-- Pause-safe: `withdraw`, `emergencyWithdraw`, `depositRewards`, and `creditStake` work when paused
+- Stake TORT and earn USDC from collection fees
+- Synthetix-style 7-day reward drip
+- `depositRewards` reconciles actual USDC received from token balance
+- `creditStake` moves TORT from a pre-funded pool into the collector's staked balance
+- TORT crediting gracefully caps to available pool and never blocks collection
+- Emergency withdraw returns TORT and forfeits unclaimed USDC
 
-### SplitLib (`src/libraries/SplitLib.sol`)
+### Legacy V1 Archive (`legacy/v0.3/`)
 
-Library for revenue split validation and calculation. Enforces basis points summing to 10,000, max 10 recipients, min 1% per recipient, no duplicates, no zero addresses.
+The old Tortoise-owned ERC-1155 contract and its V1-specific tests/scripts are archived
+for historical reference. They are not part of the active Foundry source, test, or deploy path.
 
-## Architecture
+## Collection Flow
 
+```text
+Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTotalCost)
+  |
+  +-- Router reads the In Process ERC20 sale config
+  |     require currency == Base USDC
+  |     require fundsRecipient == router
+  |     require pricePerToken * quantity <= maxTotalCost
+  |
+  +-- Router pulls USDC from collector
+  +-- Router approves the allowlisted In Process minter for the exact amount
+  +-- Router calls In Process mint(...), NFT minted to collector
+  +-- Router requires its USDC balance increased by the full sale price
+  |
+  +-- USDC distribution:
+  |     platform fee -> platform fee recipient
+  |     staking fee  -> TortoiseShell.depositRewards()
+  |     artist rev   -> artist or configured split recipients
+  |
+  +-- TortoiseShell.creditStake(collector, quantity)
 ```
-Buyer calls TortoiseV1.mintSong(songId, quantity, recipient)
-  |
-  +-- USDC pulled from buyer
-  |
-  +-- 1. Platform fee ($0.05)  --> held in TortoiseV1 contract
-  +-- 2. Staking fee ($0.10)   --> TortoiseShell.depositRewards()
-  |                                 (dripped to all stakers over 7 days)
-  +-- 3. Artist revenue ($0.85 x qty) --> split recipients or artist
-  |
-  +-- 4. TortoiseShell.creditStake(recipient, quantity)
-  |       --> TORT from pool into recipient's staked balance
-  |       --> wrapped in try/catch (mint succeeds even if shell fails)
-  |
-  +-- ERC-1155 mint
-```
-
-Three layers of protection ensure mints never fail due to shell issues:
-1. **Shell graceful degradation** -- `creditStake` caps to available pool, never reverts
-2. **TortoiseV1 try/catch** -- external shell calls wrapped, mint succeeds on failure
-3. **Kill switch** -- owner sets `tortoiseShell` to `address(0)`, disabling all shell integration
 
 ## Setup
 
@@ -73,31 +76,18 @@ forge build
 ## Test
 
 ```bash
-# All tests (excluding fork tests)
-forge test
-
-# Fork tests (requires Base RPC)
-forge test --match-contract TortoiseV1ForkTest --fork-url $BASE_RPC_URL
+# Fully local suite
+forge test --offline
 
 # With gas report
-forge test --gas-report
+forge test --offline --gas-report
 
-# CI profile (10,000 fuzz runs, 512 invariant runs)
-FOUNDRY_PROFILE=ci forge test
+# CI profile
+FOUNDRY_PROFILE=ci forge test --offline
 ```
 
-### Test Suite
-
-| Suite | Tests | Description |
-|-------|-------|-------------|
-| TortoiseV1Test | 59 | Unit tests: song creation, splits, minting, payments, admin |
-| TortoiseShellTest | 53 | Unit tests: staking, rewards, crediting, access control, pause |
-| MintToShellTest | 5 | Integration: full mint-to-shell flow with both contracts |
-| TortoiseV1FuzzTest | 7 | Fuzz: random prices/quantities/splits, payment sums, supply tracking |
-| TortoiseShellFuzzTest | 8 | Fuzz: stake/withdraw/credit sequences, reward proportionality |
-| TortoiseV1InvariantTest | 4 | Invariant: fee bounds, platform fee accounting, song ID monotonicity |
-| TortoiseShellInvariantTest | 4 | Invariant: totalStaked consistency, TORT pool accounting, USDC solvency |
-| TortoiseV1ForkTest | 6 | Fork: real Base USDC/TORT, full lifecycle, splits, reward claims |
+`forge test` without `--offline` may crash on some macOS environments when Foundry tries
+to initialize network-backed signature lookup. The offline suite is the expected local path.
 
 ## Deployment
 
@@ -108,31 +98,34 @@ forge script script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
 ```
 
 Deployment order:
-1. Deploy TortoiseShell (TORT address, USDC address, 604800 reward duration)
-2. Deploy TortoiseV1 (USDC address, fees, shell address)
-3. Register TortoiseV1 as authorized caller on TortoiseShell
-4. Fund TortoiseShell TORT pool via `fundTortPool()`
-5. Set `tortRewardPerCollection` on TortoiseShell (777,777 TORT per copy)
+
+1. Deploy `TortoiseShell`.
+2. Deploy `TortoiseMintRouter`.
+3. Register the router as an authorized caller on `TortoiseShell`.
+4. Fund the shell TORT pool via `fundTortPool()`.
+5. Set `tortRewardPerCollection` on `TortoiseShell`.
+6. Update the backend so new In Process moments use the router as `token.payoutRecipient`.
 
 ## Configuration
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| Song price | $0.85 (850,000) | Artist revenue per copy, configurable per song |
-| Platform fee | $0.05 (50,000) | Flat per transaction, held in contract |
-| Staking fee | $0.10 (100,000) | Flat per transaction, dripped to stakers |
-| TORT per collection | 777,777 TORT | Fixed per copy, from pre-funded pool |
-| Reward duration | 7 days (604,800s) | USDC drip window, resets on each deposit |
+| Platform fee | 500 bps | Taken from the inclusive sale price |
+| Staking fee | 1000 bps | Forwarded to `TortoiseShell` |
+| Reward duration | 604,800 seconds | 7-day USDC drip window |
+| TORT per collection | TBD | Fixed TORT credited per collected copy |
 
-All values in USDC units (6 decimals). TORT values in wei (18 decimals).
+Song price is configured in the In Process moment sale config. The router reads it from
+the verified In Process minter and does not store song prices.
 
-## Token Addresses (Base)
+## Base Mainnet Addresses
 
-| Token | Network | Address |
-|-------|---------|---------|
-| USDC | Base Mainnet | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| USDC | Base Sepolia | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| $TORT | Base Mainnet | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` |
+| Contract | Address |
+|----------|---------|
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| TORT | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` |
+| In Process Factory | `0x540C18B7f99b3b599c6FeB99964498931c211858` |
+| In Process ERC20 Minter | `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` |
 
 ## License
 
