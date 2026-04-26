@@ -351,6 +351,32 @@ contract TortoiseShellTest is Test {
         assertEq(usdc.balanceOf(alice), 0); // Forfeited USDC
     }
 
+    function test_emergencyWithdraw_requeuesForfeitedRewards() public {
+        vm.prank(alice);
+        shell.stake(STAKE_AMOUNT);
+
+        uint256 rewardAmount = 100e6;
+        _depositRewardsAsV1(rewardAmount);
+
+        vm.warp(block.timestamp + REWARD_DURATION / 2);
+
+        vm.prank(alice);
+        shell.emergencyWithdraw();
+
+        vm.prank(bob);
+        shell.stake(STAKE_AMOUNT);
+
+        vm.warp(block.timestamp + REWARD_DURATION + 1);
+
+        uint256 balanceBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        shell.claimRewards();
+
+        uint256 claimed = usdc.balanceOf(bob) - balanceBefore;
+        assertApproxEqAbs(claimed, rewardAmount, 100);
+        assertLe(shell.totalRewardsDeposited(), 1);
+    }
+
     function test_emergencyWithdraw_revertsZeroBalance() public {
         vm.prank(alice);
         vm.expectRevert(TortoiseShell.ZeroAmount.selector);
@@ -474,7 +500,6 @@ contract TortoiseShellTest is Test {
         // Easiest: use a huge stake relative to reward.
         vm.warp(block.timestamp + 1);
 
-        uint256 earnedBefore = shell.earned(alice);
         // With STAKE_AMOUNT = 1000e18 and rewardRate ≈ 1.65e12,
         // earned after 1 second ≈ 1.65e12 / 1e18 * 1000e18 = 1.65e12 — still above.
         // Fall back: claim will get dust only if earned < 1e12.

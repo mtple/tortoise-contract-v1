@@ -415,8 +415,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
         pendingClaims[key][oldRecipient] = 0;
         pendingClaimDeferredAt[key][oldRecipient] = 0;
-        pendingClaims[key][newRecipient] += amount;
-        pendingClaimDeferredAt[key][newRecipient] = block.timestamp;
+        _recordPendingClaim(key, newRecipient, amount);
 
         emit PendingClaimRerouted(collection, tokenId, oldRecipient, newRecipient, amount);
     }
@@ -518,9 +517,19 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             return;
         }
 
-        pendingClaims[key][recipient] += amount;
-        pendingClaimDeferredAt[key][recipient] = block.timestamp;
+        _recordPendingClaim(key, recipient, amount);
         emit SplitPaymentDeferred(collection, tokenId, recipient, amount);
+    }
+
+    function _recordPendingClaim(
+        bytes32 key,
+        address recipient,
+        uint256 amount
+    ) internal {
+        if (pendingClaims[key][recipient] == 0) {
+            pendingClaimDeferredAt[key][recipient] = block.timestamp;
+        }
+        pendingClaims[key][recipient] += amount;
     }
 
     function _tryTransferUSDC(

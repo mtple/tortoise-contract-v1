@@ -160,16 +160,14 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued USDC rewards. Release the accrual slot
-        // (reservedBalance) so the forfeited USDC is recycled into future
-        // rewards via the next depositRewards (balanceOf - totalRewardsDeposited
-        // picks it up as excess). totalRewardsDeposited is intentionally NOT
-        // decremented: no USDC leaves the contract here, so the liability
-        // remains owed to the reward pool as a whole. Decrementing it would
-        // double-count the recycled USDC on the next deposit.
+        // Forfeit accrued USDC rewards back to the pool. No USDC leaves the
+        // contract, so totalRewardsDeposited remains unchanged while the
+        // scaled reward is queued for future distribution.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
+            _queuedReward += forfeited;
+            _queuedRewardUpdatedAt = block.timestamp;
             userUnpaidRewards[msg.sender] = 0;
         }
 

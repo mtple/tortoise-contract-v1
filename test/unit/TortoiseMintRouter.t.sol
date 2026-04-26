@@ -159,6 +159,25 @@ contract TortoiseMintRouterTest is Test {
         assertEq(usdc.balanceOf(artist), 0);
     }
 
+    function test_deferredClaimTimestampPreservesFirstFailure() public {
+        usdc.setTransferShouldFail(artist, true);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        uint256 firstDeferredAt = router.pendingClaimDeferredAt(key, artist);
+        assertEq(router.pendingClaims(key, artist), 0.85e6);
+
+        vm.warp(firstDeferredAt + 30 days);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        assertEq(router.pendingClaims(key, artist), 1.7e6);
+        assertEq(router.pendingClaimDeferredAt(key, artist), firstDeferredAt);
+    }
+
     function test_configureSplitsOnlyArtist() public {
         SplitRecipient[] memory splits = new SplitRecipient[](1);
         splits[0] = SplitRecipient({recipient: splitA, percentage: 10_000});
