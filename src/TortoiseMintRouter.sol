@@ -36,6 +36,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
     mapping(bytes32 => address) public songArtist;
     mapping(bytes32 => bool) public splitsLocked;
+    mapping(bytes32 => mapping(address => bool)) public tortRewardClaimed;
     mapping(bytes32 => SplitRecipient[]) internal songSplits;
     mapping(bytes32 => mapping(address => uint256)) public pendingClaims;
     mapping(bytes32 => mapping(address => uint256)) public pendingClaimDeferredAt;
@@ -213,7 +214,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             revert UnexpectedProceeds(expectedBalance, actualBalance);
         }
 
-        _distribute(collection, tokenId, key, quantity, totalCost, msg.sender);
+        _distribute(collection, tokenId, key, totalCost, msg.sender);
         emit SongCollected(collection, tokenId, msg.sender, quantity, totalCost);
     }
 
@@ -446,7 +447,6 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         address collection,
         uint256 tokenId,
         bytes32 key,
-        uint256 quantity,
         uint256 totalReceived,
         address collector
     ) internal {
@@ -457,14 +457,18 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
         uint256 stakingFee = (totalReceived * stakingFeeBps) / BASIS_POINTS;
         address shell = tortoiseShell;
+        bool stakingFeeDeposited;
         if (stakingFee > 0 && shell != address(0)) {
             usdc.safeTransfer(shell, stakingFee);
             ITortoiseShell(shell).depositRewards(stakingFee);
+            stakingFeeDeposited = true;
         }
 
         uint256 artistRevenue = totalReceived - platformFee - stakingFee;
         _distributeArtistRevenue(collection, tokenId, key, artistRevenue);
-        _creditShell(collection, tokenId, collector, quantity, shell);
+        if (stakingFeeDeposited) {
+            _creditShell(collection, tokenId, key, collector, shell);
+        }
 
         emit RevenueDistributed(collection, tokenId, platformFee, stakingFee, artistRevenue);
     }
@@ -535,18 +539,25 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
     function _creditShell(
         address collection,
         uint256 tokenId,
+        bytes32 key,
         address collector,
-        uint256 quantity,
         address shell
     ) internal {
         if (shell == address(0)) {
             return;
         }
+        if (tortRewardClaimed[key][collector]) {
+            return;
+        }
 
-        try ITortoiseShell(shell).creditStake(collector, quantity) {
-            emit StakeCredited(collection, tokenId, collector, quantity);
+        try ITortoiseShell(shell).creditStake(collector, 1) returns (uint256 credited) {
+            if (credited == 0) {
+                return;
+            }
+            tortRewardClaimed[key][collector] = true;
+            emit StakeCredited(collection, tokenId, collector, 1);
         } catch {
-            emit ShellCreditFailed(collection, tokenId, collector, quantity);
+            emit ShellCreditFailed(collection, tokenId, collector, 1);
         }
     }
 

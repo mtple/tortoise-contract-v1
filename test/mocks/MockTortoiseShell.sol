@@ -54,9 +54,13 @@ contract MockTortoiseShell is ITortoiseShell {
         if (failCreditStake) {
             revert("credit failed");
         }
+        credited = quantity * tortRewardPerCollection;
+        if (credited == 0) {
+            creditCalls++;
+            return 0;
+        }
         creditedQuantity[user] += quantity;
         creditCalls++;
-        return quantity * tortRewardPerCollection;
     }
 
     function getTortPoolBalance() external view returns (uint256) {

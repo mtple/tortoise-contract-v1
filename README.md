@@ -18,7 +18,7 @@ Payment router for In Process ERC-20 collects.
 - Splits USDC into platform fee, staking fee, and artist revenue
 - Lets only the registered artist configure or lock song splits
 - Defers failed artist/split transfers into pull claims
-- Credits collector TORT through `TortoiseShell` with try/catch
+- Credits collector TORT through `TortoiseShell` once per wallet per song, with try/catch
 
 ### TortoiseShell (`src/TortoiseShell.sol`)
 
@@ -56,7 +56,7 @@ Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTot
   |     staking fee  -> TortoiseShell.depositRewards()
   |     artist rev   -> artist or configured split recipients
   |
-  +-- TortoiseShell.creditStake(collector, quantity)
+  +-- TortoiseShell.creditStake(collector, 1) on the wallet's first eligible collect
 ```
 
 ## Setup

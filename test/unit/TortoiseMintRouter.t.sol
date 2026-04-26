@@ -79,8 +79,68 @@ contract TortoiseMintRouterTest is Test {
         assertEq(usdc.balanceOf(address(shell)), 0.5e6);
         assertEq(usdc.balanceOf(artist), 4.25e6);
         assertEq(shell.rewardsDeposited(), 0.5e6);
-        assertEq(shell.creditedQuantity(collector), 5);
+        assertEq(shell.creditedQuantity(collector), 1);
         assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 5);
+    }
+
+    function test_collectOnlyCreditsTortOncePerSongPerWallet() public {
+        vm.startPrank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+        vm.stopPrank();
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertTrue(router.tortRewardClaimed(key, collector));
+        assertEq(shell.depositCalls(), 2);
+        assertEq(shell.rewardsDeposited(), 0.2e6);
+        assertEq(shell.creditCalls(), 1);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(minter.minted(key, collector), 2);
+    }
+
+    function test_collectCanCreditDifferentWalletsForSameSong() public {
+        address secondCollector = makeAddr("secondCollector");
+        usdc.mint(secondCollector, 1000e6);
+        vm.prank(secondCollector);
+        usdc.approve(address(router), type(uint256).max);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(secondCollector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertTrue(router.tortRewardClaimed(key, collector));
+        assertTrue(router.tortRewardClaimed(key, secondCollector));
+        assertEq(shell.creditCalls(), 2);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(shell.creditedQuantity(secondCollector), 1);
+    }
+
+    function test_collectDoesNotMarkTortRewardClaimedWhenShellCreditsZero() public {
+        shell.setTortRewardPerCollection(0);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertFalse(router.tortRewardClaimed(key, collector));
+        assertEq(shell.creditCalls(), 1);
+        assertEq(shell.creditedQuantity(collector), 0);
+    }
+
+    function test_collectDoesNotCreditTortWhenStakingFeeIsZero() public {
+        router.updateStakingFeeBps(0);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertFalse(router.tortRewardClaimed(key, collector));
+        assertEq(usdc.balanceOf(address(shell)), 0);
+        assertEq(shell.depositCalls(), 0);
+        assertEq(shell.creditCalls(), 0);
     }
 
     function test_collectUsesArtistSplits() public {
