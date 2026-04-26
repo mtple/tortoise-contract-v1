@@ -117,7 +117,8 @@ Deployment order:
 | TORT per collection | TBD | Fixed TORT credited per collected copy |
 
 Song price is configured in the In Process moment sale config. The router reads it from
-the verified In Process minter and does not store song prices.
+the verified In Process minter and does not store song prices. Collects revert when
+the total USDC price would round any nonzero configured router fee down to zero.
 
 ## Base Mainnet Addresses
 

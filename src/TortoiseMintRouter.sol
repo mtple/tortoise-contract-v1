@@ -110,6 +110,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
     error InvalidFundsRecipient();
     error PriceExceedsMax();
     error UnexpectedProceeds(uint256 expectedBalance, uint256 actualBalance);
+    error FeeRoundsToZero(uint256 totalCost, uint256 feeBps);
     error FeeExceedsMaximum();
     error FeeTotalInvalid();
     error ShellRequired();
@@ -185,6 +186,8 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         if (totalCost > maxTotalCost) {
             revert PriceExceedsMax();
         }
+        _validateFeeMinimum(totalCost, platformFeeBps);
+        _validateFeeMinimum(totalCost, stakingFeeBps);
 
         uint256 balanceBefore = usdc.balanceOf(address(this));
 
@@ -595,6 +598,15 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         }
         if (newStakingFeeBps > 0 && shell == address(0)) {
             revert ShellRequired();
+        }
+    }
+
+    function _validateFeeMinimum(
+        uint256 totalCost,
+        uint256 feeBps
+    ) internal pure {
+        if (feeBps > 0 && (totalCost * feeBps) / BASIS_POINTS == 0) {
+            revert FeeRoundsToZero(totalCost, feeBps);
         }
     }
 }
