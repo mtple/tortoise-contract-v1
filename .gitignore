@@ -26,6 +26,9 @@ deep-invariant-run.log
 deep-fuzz-run.log
 slither-run.log
 
+# Internal docs
+md/
+
 # OS
 .DS_Store
 
