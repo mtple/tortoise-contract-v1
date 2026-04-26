@@ -15,10 +15,10 @@ Payment router for In Process ERC-20 collects.
 - Requires the In Process sale currency to be Base USDC
 - Requires the sale `fundsRecipient` to be the router
 - Requires full proceeds after collect: `pricePerToken * quantity`
-- Splits USDC into platform fee, staking fee, and artist revenue
+- Splits USDC into platform fee, eligible staking fee, and artist revenue
 - Lets only the registered artist configure or lock song splits
-- Defers failed artist/split transfers into pull claims
-- Credits collector TORT through `TortoiseShell` once per wallet per song, with try/catch
+- Defers failed artist/split transfers into permissionless pull claims
+- Credits collector TORT through `TortoiseShell` once per wallet per song when the full reward is available
 
 ### TortoiseShell (`src/TortoiseShell.sol`)
 
@@ -53,10 +53,11 @@ Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTot
   |
   +-- USDC distribution:
   |     platform fee -> platform fee recipient
-  |     staking fee  -> TortoiseShell.depositRewards()
+  |     staking fee  -> TortoiseShell.depositRewards() only with a full TORT credit
   |     artist rev   -> artist or configured split recipients
   |
   +-- TortoiseShell.creditStake(collector, 1) on the wallet's first eligible collect
+      if tortRewardPerCollection is fully covered by the shell pool
 ```
 
 ## Setup
@@ -111,7 +112,7 @@ Deployment order:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | Platform fee | 500 bps | Taken from the inclusive sale price |
-| Staking fee | 1000 bps | Forwarded to `TortoiseShell` |
+| Staking fee | 1000 bps | Forwarded to `TortoiseShell` only when full TORT credit succeeds |
 | Reward duration | 604,800 seconds | 7-day USDC drip window |
 | TORT per collection | TBD | Fixed TORT credited per collected copy |
 

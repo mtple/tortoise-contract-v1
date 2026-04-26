@@ -18,7 +18,6 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
     uint256 public constant BASIS_POINTS = 10_000;
     uint256 public constant MAX_FEE_BPS = 2000;
-    uint256 public constant REROUTE_DELAY = 90 days;
 
     // ============ Tokens And Integrations ============
 
@@ -92,13 +91,6 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         address indexed recipient,
         uint256 amount
     );
-    event PendingClaimRerouted(
-        address indexed collection,
-        uint256 indexed tokenId,
-        address indexed oldRecipient,
-        address newRecipient,
-        uint256 amount
-    );
 
     // ============ Errors ============
 
@@ -124,9 +116,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
     error CannotRecoverUSDC();
     error NothingToClaim();
     error TransferFailedStillClaimable();
-    error ZeroRecipient();
-    error SelfReroute();
-    error RerouteTooSoon();
+    error UnexpectedShellCredit(uint256 expected, uint256 actual);
     error RenouncingOwnershipDisabled();
 
     // ============ Constructor ============
@@ -389,37 +379,6 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         emit TokensRecovered(token, owner(), amount);
     }
 
-    function rerouteBlockedClaim(
-        address collection,
-        uint256 tokenId,
-        address oldRecipient,
-        address newRecipient
-    ) external onlyOwner nonReentrant {
-        if (newRecipient == address(0)) {
-            revert ZeroRecipient();
-        }
-        if (newRecipient == oldRecipient) {
-            revert SelfReroute();
-        }
-
-        bytes32 key = songKey(collection, tokenId);
-        uint256 amount = pendingClaims[key][oldRecipient];
-        if (amount == 0) {
-            revert NothingToClaim();
-        }
-
-        uint256 deferredAt = pendingClaimDeferredAt[key][oldRecipient];
-        if (block.timestamp < deferredAt + REROUTE_DELAY) {
-            revert RerouteTooSoon();
-        }
-
-        pendingClaims[key][oldRecipient] = 0;
-        pendingClaimDeferredAt[key][oldRecipient] = 0;
-        _recordPendingClaim(key, newRecipient, amount);
-
-        emit PendingClaimRerouted(collection, tokenId, oldRecipient, newRecipient, amount);
-    }
-
     function renounceOwnership() public view override onlyOwner {
         revert RenouncingOwnershipDisabled();
     }
@@ -456,20 +415,23 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
         uint256 stakingFee = (totalReceived * stakingFeeBps) / BASIS_POINTS;
         address shell = tortoiseShell;
-        bool stakingFeeDeposited;
-        if (stakingFee > 0 && shell != address(0)) {
+        uint256 stakingFeeDistributed;
+        uint256 artistRevenue = totalReceived - platformFee;
+        if (
+            stakingFee > 0 && shell != address(0)
+                && _creditShell(collection, tokenId, key, collector, shell)
+        ) {
+            artistRevenue -= stakingFee;
+            stakingFeeDistributed = stakingFee;
             usdc.safeTransfer(shell, stakingFee);
             ITortoiseShell(shell).depositRewards(stakingFee);
-            stakingFeeDeposited = true;
         }
 
-        uint256 artistRevenue = totalReceived - platformFee - stakingFee;
         _distributeArtistRevenue(collection, tokenId, key, artistRevenue);
-        if (stakingFeeDeposited) {
-            _creditShell(collection, tokenId, key, collector, shell);
-        }
 
-        emit RevenueDistributed(collection, tokenId, platformFee, stakingFee, artistRevenue);
+        emit RevenueDistributed(
+            collection, tokenId, platformFee, stakingFeeDistributed, artistRevenue
+        );
     }
 
     function _distributeArtistRevenue(
@@ -551,23 +513,52 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         bytes32 key,
         address collector,
         address shell
-    ) internal {
+    ) internal returns (bool creditedFullReward) {
         if (shell == address(0)) {
-            return;
+            return false;
         }
         if (tortRewardClaimed[key][collector]) {
-            return;
+            return false;
         }
 
-        try ITortoiseShell(shell).creditStake(collector, 1) returns (uint256 credited) {
-            if (credited == 0) {
-                return;
-            }
-            tortRewardClaimed[key][collector] = true;
-            emit StakeCredited(collection, tokenId, collector, 1);
+        uint256 expectedCredit;
+        try ITortoiseShell(shell).tortRewardPerCollection() returns (uint256 reward) {
+            expectedCredit = reward;
         } catch {
             emit ShellCreditFailed(collection, tokenId, collector, 1);
+            return false;
         }
+        if (expectedCredit == 0) {
+            return false;
+        }
+
+        try ITortoiseShell(shell).getTortPoolBalance() returns (uint256 poolBalance) {
+            if (poolBalance < expectedCredit) {
+                return false;
+            }
+        } catch {
+            emit ShellCreditFailed(collection, tokenId, collector, 1);
+            return false;
+        }
+
+        (bool ok, bytes memory ret) =
+            shell.call(abi.encodeCall(ITortoiseShell.creditStake, (collector, 1)));
+        if (!ok) {
+            emit ShellCreditFailed(collection, tokenId, collector, 1);
+            return false;
+        }
+
+        uint256 actualCredit;
+        if (ret.length > 0) {
+            actualCredit = abi.decode(ret, (uint256));
+        }
+        if (actualCredit != expectedCredit) {
+            revert UnexpectedShellCredit(expectedCredit, actualCredit);
+        }
+
+        tortRewardClaimed[key][collector] = true;
+        emit StakeCredited(collection, tokenId, collector, 1);
+        return true;
     }
 
     function _setInProcessMinter(

@@ -91,10 +91,11 @@ contract TortoiseMintRouterTest is Test {
 
         bytes32 key = router.songKey(address(collection), TOKEN_ID);
         assertTrue(router.tortRewardClaimed(key, collector));
-        assertEq(shell.depositCalls(), 2);
-        assertEq(shell.rewardsDeposited(), 0.2e6);
+        assertEq(shell.depositCalls(), 1);
+        assertEq(shell.rewardsDeposited(), 0.1e6);
         assertEq(shell.creditCalls(), 1);
         assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(usdc.balanceOf(artist), 1.8e6);
         assertEq(minter.minted(key, collector), 2);
     }
 
@@ -126,8 +127,24 @@ contract TortoiseMintRouterTest is Test {
 
         bytes32 key = router.songKey(address(collection), TOKEN_ID);
         assertFalse(router.tortRewardClaimed(key, collector));
-        assertEq(shell.creditCalls(), 1);
+        assertEq(shell.depositCalls(), 0);
+        assertEq(shell.creditCalls(), 0);
         assertEq(shell.creditedQuantity(collector), 0);
+        assertEq(usdc.balanceOf(artist), 0.95e6);
+    }
+
+    function test_collectRoutesStakingFeeToArtistWhenTortPoolCannotFullyCredit() public {
+        shell.setTortPoolBalance(shell.tortRewardPerCollection() - 1);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertFalse(router.tortRewardClaimed(key, collector));
+        assertEq(usdc.balanceOf(address(shell)), 0);
+        assertEq(usdc.balanceOf(artist), 0.95e6);
+        assertEq(shell.depositCalls(), 0);
+        assertEq(shell.creditCalls(), 0);
     }
 
     function test_collectDoesNotCreditTortWhenStakingFeeIsZero() public {
@@ -174,8 +191,28 @@ contract TortoiseMintRouterTest is Test {
         vm.prank(collector);
         router.collect(address(collection), TOKEN_ID, 1, PRICE);
 
-        assertEq(router.pendingClaims(key, artist), 1.7e6);
+        assertEq(router.pendingClaims(key, artist), 1.8e6);
         assertEq(router.pendingClaimDeferredAt(key, artist), firstDeferredAt);
+    }
+
+    function test_claimPendingCanBeCalledByAnyone() public {
+        usdc.setTransferShouldFail(artist, true);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertEq(router.pendingClaims(key, artist), 0.85e6);
+
+        usdc.setTransferShouldFail(artist, false);
+
+        address helper = makeAddr("helper");
+        vm.prank(helper);
+        router.claimPending(address(collection), TOKEN_ID, artist);
+
+        assertEq(router.pendingClaims(key, artist), 0);
+        assertEq(router.pendingClaimDeferredAt(key, artist), 0);
+        assertEq(usdc.balanceOf(artist), 0.85e6);
     }
 
     function test_configureSplitsOnlyArtist() public {
@@ -275,8 +312,8 @@ contract TortoiseMintRouterTest is Test {
         vm.prank(collector);
         router.collect(address(collection), TOKEN_ID, 1, PRICE);
 
-        assertEq(usdc.balanceOf(artist), 0.85e6);
-        assertEq(shell.depositCalls(), 1);
+        assertEq(usdc.balanceOf(artist), 0.95e6);
+        assertEq(shell.depositCalls(), 0);
         assertEq(shell.creditCalls(), 0);
     }
 
