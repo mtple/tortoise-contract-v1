@@ -76,11 +76,37 @@ contract TortoiseMintRouterTest is Test {
         router.collect(address(collection), TOKEN_ID, 5, 5 * PRICE);
 
         assertEq(usdc.balanceOf(platform), 0.25e6);
-        assertEq(usdc.balanceOf(address(shell)), 0.5e6);
-        assertEq(usdc.balanceOf(artist), 4.25e6);
-        assertEq(shell.rewardsDeposited(), 0.5e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.1e6);
+        assertEq(usdc.balanceOf(artist), 4.65e6);
+        assertEq(shell.rewardsDeposited(), 0.1e6);
         assertEq(shell.creditedQuantity(collector), 1);
         assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 5);
+    }
+
+    function test_collectTwoCopiesRoutesSameFeesAsRepeatedSingleCopy() public {
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID, 2, 2 * PRICE);
+
+        assertEq(usdc.balanceOf(platform), 0.1e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.1e6);
+        assertEq(usdc.balanceOf(artist), 1.8e6);
+        assertEq(shell.rewardsDeposited(), 0.1e6);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 2);
+    }
+
+    function test_collectMultiCopyMatchesRepeatedSingleCopyFeeRouting() public {
+        vm.startPrank(collector);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+        router.collect(address(collection), TOKEN_ID, 1, PRICE);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(platform), 0.1e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.1e6);
+        assertEq(usdc.balanceOf(artist), 1.8e6);
+        assertEq(shell.rewardsDeposited(), 0.1e6);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 2);
     }
 
     function test_collectRevertsWhenPlatformFeeRoundsToZero() public {
@@ -104,17 +130,28 @@ contract TortoiseMintRouterTest is Test {
         router.collect(address(collection), TOKEN_ID, 1, 1);
     }
 
-    function test_collectFeeMinimumUsesTotalCost() public {
+    function test_collectPlatformFeeMinimumUsesTotalCost() public {
+        router.updateStakingFeeBps(0);
         minter.setSale(address(collection), TOKEN_ID, 1, address(router), address(usdc));
 
         vm.prank(collector);
         router.collect(address(collection), TOKEN_ID, 20, 20);
 
         assertEq(usdc.balanceOf(platform), 1);
-        assertEq(usdc.balanceOf(address(shell)), 2);
-        assertEq(usdc.balanceOf(artist), 17);
-        assertEq(shell.rewardsDeposited(), 2);
-        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(usdc.balanceOf(address(shell)), 0);
+        assertEq(usdc.balanceOf(artist), 19);
+        assertEq(shell.rewardsDeposited(), 0);
+        assertEq(shell.creditedQuantity(collector), 0);
+    }
+
+    function test_collectStakingFeeMinimumUsesUnitPrice() public {
+        minter.setSale(address(collection), TOKEN_ID, 1, address(router), address(usdc));
+
+        vm.prank(collector);
+        vm.expectRevert(
+            abi.encodeWithSelector(TortoiseMintRouter.FeeRoundsToZero.selector, 1, STAKING_FEE_BPS)
+        );
+        router.collect(address(collection), TOKEN_ID, 20, 20);
     }
 
     function test_collectOnlyCreditsTortOncePerSongPerWallet() public {

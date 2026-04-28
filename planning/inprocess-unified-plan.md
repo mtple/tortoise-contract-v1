@@ -74,11 +74,12 @@ Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTot
   |
   +-- 5. Router distributes USDC
   |       5% platform fee -> platform fee recipient
-  |       10% staking fee -> TortoiseShell.depositRewards()
-  |       85% artist revenue -> artist wallet or split recipients
+  |       10% staking fee on one unit -> TortoiseShell.depositRewards()
+  |           only when full one-wallet/song TORT credit succeeds
+  |       remaining revenue -> artist wallet or split recipients
   |
   +-- 6. Router credits TORT to collector's shell
-          try TortoiseShell.creditStake(collector, quantity)
+          try TortoiseShell.creditStake(collector, 1)
           catch -> emit ShellCreditFailed, mint still succeeds
 ```
 
@@ -95,7 +96,7 @@ TortoiseMintRouter is a payment routing contract that wraps In Process collects.
 - Accepts USDC from collectors
 - Triggers the In Process collect or mint call, with the NFT going to the collector
 - Receives full sale proceeds as `payoutRecipient`, `fundsRecipient`, or the equivalent In Process payout field
-- Splits USDC into platform fee, staking fee, and artist revenue
+- Splits USDC into platform fee, reward-eligible staking fee, and artist revenue
 - Credits TORT to the collector's shell
 
 ### State
@@ -170,6 +171,8 @@ function collect(
     uint256 totalCost = pricePerToken * quantity;
     require(totalCost <= maxTotalCost, "Price exceeds max");
     require(totalCost > 0, "Zero cost");
+    _validateFeeMinimum(totalCost, platformFeeBps);
+    _validateFeeMinimum(pricePerToken, stakingFeeBps);
 
     uint256 balanceBefore = usdc.balanceOf(address(this));
     usdc.safeTransferFrom(msg.sender, address(this), totalCost);
@@ -193,7 +196,7 @@ function collect(
     uint256 balanceAfter = usdc.balanceOf(address(this));
     require(balanceAfter == expectedBalance, "Unexpected proceeds");
 
-    _distribute(collection, tokenId, quantity, totalCost, msg.sender);
+    _distribute(collection, tokenId, totalCost, pricePerToken, msg.sender);
 
     emit SongCollected(collection, tokenId, msg.sender, quantity, totalCost);
 }
@@ -222,8 +225,8 @@ These functions do not need to be called in the hot path if the full-proceeds in
 function _distribute(
     address collection,
     uint256 tokenId,
-    uint256 quantity,
     uint256 totalReceived,
+    uint256 pricePerToken,
     address collector
 ) internal {
     uint256 platformFee = (totalReceived * platformFeeBps) / BASIS_POINTS;
@@ -231,33 +234,33 @@ function _distribute(
         usdc.safeTransfer(platformFeeRecipient, platformFee);
     }
 
-    uint256 stakingFee = (totalReceived * stakingFeeBps) / BASIS_POINTS;
-    if (stakingFee > 0 && tortoiseShell != address(0)) {
+    uint256 stakingFee = (pricePerToken * stakingFeeBps) / BASIS_POINTS;
+    bool credited = _creditShell(collection, tokenId, collector);
+    if (stakingFee > 0 && credited) {
         usdc.safeTransfer(tortoiseShell, stakingFee);
         ITortoiseShell(tortoiseShell).depositRewards(stakingFee);
     }
 
-    uint256 artistRevenue = totalReceived - platformFee - stakingFee;
+    uint256 artistRevenue = totalReceived - platformFee - (credited ? stakingFee : 0);
     bytes32 songKey = keccak256(abi.encodePacked(collection, tokenId));
     _distributeArtistRevenue(songKey, artistRevenue);
 
-    _creditShell(collection, tokenId, collector, quantity);
-
-    emit RevenueDistributed(collection, tokenId, platformFee, stakingFee, artistRevenue);
+    emit RevenueDistributed(collection, tokenId, platformFee, credited ? stakingFee : 0, artistRevenue);
 }
 
 function _creditShell(
     address collection,
     uint256 tokenId,
-    address collector,
-    uint256 quantity
-) internal {
-    if (tortoiseShell == address(0)) return;
+    address collector
+) internal returns (bool) {
+    if (tortoiseShell == address(0)) return false;
 
-    try ITortoiseShell(tortoiseShell).creditStake(collector, quantity) {
-        emit StakeCredited(collection, tokenId, collector, quantity);
+    try ITortoiseShell(tortoiseShell).creditStake(collector, 1) {
+        emit StakeCredited(collection, tokenId, collector, 1);
+        return true;
     } catch {
-        emit ShellCreditFailed(collection, tokenId, collector, quantity);
+        emit ShellCreditFailed(collection, tokenId, collector, 1);
+        return false;
     }
 }
 ```
@@ -352,8 +355,8 @@ TortoiseShell carries forward from the current implementation. The authorized ca
 ### Summary
 
 - Users stake TORT and earn USDC rewards through a 7-day Synthetix-style drip.
-- Every collection deposits the staking fee into TortoiseShell for distribution to all stakers.
-- Every collection credits fixed TORT per copy into the collector's staked balance.
+- The first eligible wallet/song collect deposits one unit's staking fee into TortoiseShell for distribution to all stakers.
+- The first eligible wallet/song collect credits fixed TORT into the collector's staked balance.
 - TORT pool depletion degrades gracefully and never reverts the mint.
 - `depositRewards` reconciles actual USDC received from token balance, rather than trusting caller-provided amount.
 - Reward duration is bounded and cannot be zero.
@@ -380,7 +383,7 @@ The current TortoiseShell reward math, TORT credit mechanics, pause behavior, an
 - **Sale config validation:** require registered song, nonzero quantity, USDC currency, router payout recipient, nonzero price, and `totalCost <= maxTotalCost`.
 - **Shell disabled plus staking fee:** `updateTortoiseShell(address(0))` auto-zeros `stakingFeeBps`, and non-zero staking fee requires a configured shell.
 - **Fee cap:** `platformFeeBps + stakingFeeBps` must be less than `BASIS_POINTS`.
-- **Shell credit try/catch:** shell graceful degradation, router try/catch, and shell kill switch all preserve collection flow.
+- **Shell credit try/catch:** shell graceful degradation, router try/catch, and shell kill switch all preserve collection flow. Staking fees are charged only for a unit that receives a full TORT credit.
 - **Reentrancy:** `collect()` is `nonReentrant`; In Process minting is an external call.
 - **Front-run protection:** `maxTotalCost` lets the collector cap total USDC paid.
 - **Approval hygiene:** prefer resetting USDC approval to zero after minting, or using a bounded force-approve helper if the chosen USDC interface requires it.

@@ -53,7 +53,7 @@ Collector calls TortoiseMintRouter.collect(collection, tokenId, quantity, maxTot
   |
   +-- USDC distribution:
   |     platform fee -> platform fee recipient
-  |     staking fee  -> TortoiseShell.depositRewards() only with a full TORT credit
+  |     staking fee  -> one unit to TortoiseShell.depositRewards() only with a full TORT credit
   |     artist rev   -> artist or configured split recipients
   |
   +-- TortoiseShell.creditStake(collector, 1) on the wallet's first eligible collect
@@ -112,9 +112,9 @@ Deployment order:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | Platform fee | 500 bps | Taken from the inclusive sale price |
-| Staking fee | 1000 bps | Forwarded to `TortoiseShell` only when full TORT credit succeeds |
+| Staking fee | 1000 bps | Taken from one unit only when full TORT credit succeeds |
 | Reward duration | 604,800 seconds | 7-day USDC drip window |
-| TORT per collection | TBD | Fixed TORT credited per collected copy |
+| TORT per eligible wallet/song | TBD | Fixed TORT credited once per wallet per song |
 
 Song price is configured in the In Process moment sale config. The router reads it from
 the verified In Process minter and does not store song prices. Collects revert when

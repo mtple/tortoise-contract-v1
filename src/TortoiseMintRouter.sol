@@ -187,7 +187,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             revert PriceExceedsMax();
         }
         _validateFeeMinimum(totalCost, platformFeeBps);
-        _validateFeeMinimum(totalCost, stakingFeeBps);
+        _validateFeeMinimum(sale.pricePerToken, stakingFeeBps);
 
         uint256 balanceBefore = usdc.balanceOf(address(this));
 
@@ -207,7 +207,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             revert UnexpectedProceeds(expectedBalance, actualBalance);
         }
 
-        _distribute(collection, tokenId, key, totalCost, msg.sender);
+        _distribute(collection, tokenId, key, totalCost, sale.pricePerToken, msg.sender);
         emit SongCollected(collection, tokenId, msg.sender, quantity, totalCost);
     }
 
@@ -409,6 +409,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         uint256 tokenId,
         bytes32 key,
         uint256 totalReceived,
+        uint256 rewardEligiblePrice,
         address collector
     ) internal {
         uint256 platformFee = (totalReceived * platformFeeBps) / BASIS_POINTS;
@@ -416,7 +417,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             usdc.safeTransfer(platformFeeRecipient, platformFee);
         }
 
-        uint256 stakingFee = (totalReceived * stakingFeeBps) / BASIS_POINTS;
+        uint256 stakingFee = (rewardEligiblePrice * stakingFeeBps) / BASIS_POINTS;
         address shell = tortoiseShell;
         uint256 stakingFeeDistributed;
         uint256 artistRevenue = totalReceived - platformFee;
