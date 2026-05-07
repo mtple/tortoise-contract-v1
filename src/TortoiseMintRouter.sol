@@ -4,13 +4,15 @@ pragma solidity 0.8.34;
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IInProcessERC20Minter, InProcessSale} from "./interfaces/IInProcessERC20Minter.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 import {SplitRecipient, SplitLib} from "./libraries/SplitLib.sol";
 
-contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable {
+contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable, EIP712 {
     using SafeERC20 for IERC20;
     using SplitLib for SplitRecipient[];
 
@@ -18,6 +20,25 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
 
     uint256 public constant BASIS_POINTS = 10_000;
     uint256 public constant MAX_FEE_BPS = 2000;
+    uint256 public constant MAX_BATCH_ITEMS = 30;
+    bytes32 public constant REGISTER_SONG_WITH_SPLITS_TYPEHASH = keccak256(
+        "RegisterSongWithSplits(address collection,uint256 tokenId,address artist,bytes32 splitsHash,bool lockSplits,uint256 nonce,uint256 deadline)"
+    );
+
+    // ============ Structs ============
+
+    struct CollectItem {
+        address collection;
+        uint256 tokenId;
+        uint256 quantity;
+        uint256 maxTotalCost;
+    }
+
+    struct CollectQuote {
+        bytes32 key;
+        InProcessSale sale;
+        uint256 totalCost;
+    }
 
     // ============ Tokens And Integrations ============
 
@@ -39,6 +60,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
     mapping(bytes32 => SplitRecipient[]) internal songSplits;
     mapping(bytes32 => mapping(address => uint256)) public pendingClaims;
     mapping(bytes32 => mapping(address => uint256)) public pendingClaimDeferredAt;
+    mapping(address => uint256) public splitAuthorizationNonces;
 
     // ============ Events ============
 
@@ -91,6 +113,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         address indexed recipient,
         uint256 amount
     );
+    event BatchCollected(address indexed collector, uint256 itemCount, uint256 totalPaid);
 
     // ============ Errors ============
 
@@ -104,11 +127,16 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
     error SplitsAreLocked();
     error SplitToSelf();
     error SplitToUSDC();
+    error SignatureExpired();
+    error InvalidArtistSignature();
     error ZeroQuantity();
     error ZeroCost();
     error InvalidCurrency();
     error InvalidFundsRecipient();
     error PriceExceedsMax();
+    error EmptyBatch();
+    error BatchTooLarge();
+    error AggregatePriceExceedsMax();
     error UnexpectedProceeds(uint256 expectedBalance, uint256 actualBalance);
     error FeeRoundsToZero(uint256 totalCost, uint256 feeBps);
     error FeeExceedsMaximum();
@@ -132,7 +160,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         address _platformFeeRecipient,
         uint256 _platformFeeBps,
         uint256 _stakingFeeBps
-    ) Ownable(msg.sender) {
+    ) Ownable(msg.sender) EIP712("TortoiseMintRouter", "1") {
         if (_usdc == address(0)) {
             revert ZeroAddress();
         }
@@ -163,52 +191,58 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         uint256 quantity,
         uint256 maxTotalCost
     ) external nonReentrant whenNotPaused {
-        bytes32 key = songKey(collection, tokenId);
-        if (songArtist[key] == address(0)) {
-            revert SongNotRegistered();
-        }
-        if (quantity == 0) {
-            revert ZeroQuantity();
-        }
-
-        InProcessSale memory sale = IInProcessERC20Minter(inProcessMinter).sale(collection, tokenId);
-        if (sale.currency != address(usdc)) {
-            revert InvalidCurrency();
-        }
-        if (sale.fundsRecipient != address(this)) {
-            revert InvalidFundsRecipient();
-        }
-
-        uint256 totalCost = sale.pricePerToken * quantity;
-        if (totalCost == 0) {
-            revert ZeroCost();
-        }
-        if (totalCost > maxTotalCost) {
-            revert PriceExceedsMax();
-        }
-        _validateFeeMinimum(totalCost, platformFeeBps);
-        _validateFeeMinimum(sale.pricePerToken, stakingFeeBps);
+        CollectItem memory item = CollectItem({
+            collection: collection, tokenId: tokenId, quantity: quantity, maxTotalCost: maxTotalCost
+        });
+        CollectQuote memory quote = _validateCollectItem(item);
 
         uint256 balanceBefore = usdc.balanceOf(address(this));
 
-        usdc.safeTransferFrom(msg.sender, address(this), totalCost);
-        usdc.forceApprove(inProcessMinter, totalCost);
+        usdc.safeTransferFrom(msg.sender, address(this), quote.totalCost);
 
-        IInProcessERC20Minter(inProcessMinter)
-            .mint(
-                msg.sender, quantity, collection, tokenId, totalCost, address(usdc), address(0), ""
-            );
+        _mintAndDistribute(item, quote, msg.sender, balanceBefore + quote.totalCost);
+    }
 
-        usdc.forceApprove(inProcessMinter, 0);
-
-        uint256 expectedBalance = balanceBefore + totalCost;
-        uint256 actualBalance = usdc.balanceOf(address(this));
-        if (actualBalance != expectedBalance) {
-            revert UnexpectedProceeds(expectedBalance, actualBalance);
+    function batchCollect(
+        CollectItem[] calldata items,
+        uint256 maxAggregateCost
+    ) external nonReentrant whenNotPaused {
+        uint256 itemCount = items.length;
+        if (itemCount == 0) {
+            revert EmptyBatch();
+        }
+        if (itemCount > MAX_BATCH_ITEMS) {
+            revert BatchTooLarge();
         }
 
-        _distribute(collection, tokenId, key, totalCost, sale.pricePerToken, msg.sender);
-        emit SongCollected(collection, tokenId, msg.sender, quantity, totalCost);
+        CollectQuote[] memory quotes = new CollectQuote[](itemCount);
+        uint256 aggregateCost;
+        for (uint256 i; i < itemCount;) {
+            CollectItem memory item = items[i];
+            CollectQuote memory quote = _validateCollectItem(item);
+            quotes[i] = quote;
+            aggregateCost += quote.totalCost;
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (aggregateCost > maxAggregateCost) {
+            revert AggregatePriceExceedsMax();
+        }
+
+        uint256 balanceBefore = usdc.balanceOf(address(this));
+        usdc.safeTransferFrom(msg.sender, address(this), aggregateCost);
+
+        uint256 expectedBalance = balanceBefore + aggregateCost;
+        for (uint256 i; i < itemCount;) {
+            expectedBalance = _mintAndDistribute(items[i], quotes[i], msg.sender, expectedBalance);
+            unchecked {
+                ++i;
+            }
+        }
+
+        emit BatchCollected(msg.sender, itemCount, aggregateCost);
     }
 
     function claimPending(
@@ -240,20 +274,39 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         uint256 tokenId,
         address artist
     ) external onlyOwner {
-        if (collection == address(0) || artist == address(0)) {
-            revert ZeroAddress();
-        }
-        if (collection.code.length == 0) {
-            revert CollectionMustBeContract();
+        _registerSong(collection, tokenId, artist);
+    }
+
+    function registerSongWithSplits(
+        address collection,
+        uint256 tokenId,
+        address artist,
+        SplitRecipient[] calldata splits,
+        bool lockSongSplits,
+        uint256 deadline,
+        bytes calldata artistSignature
+    ) external onlyOwner {
+        _validateSongRegistration(collection, tokenId, artist);
+
+        if (block.timestamp > deadline) {
+            revert SignatureExpired();
         }
 
-        bytes32 key = songKey(collection, tokenId);
-        if (songArtist[key] != address(0)) {
-            revert SongAlreadyRegistered();
+        uint256 nonce = splitAuthorizationNonces[artist]++;
+        bytes32 digest = _hashRegisterSongWithSplits(
+            collection, tokenId, artist, _hashSplits(splits), lockSongSplits, nonce, deadline
+        );
+        if (!SignatureChecker.isValidSignatureNowCalldata(artist, digest, artistSignature)) {
+            revert InvalidArtistSignature();
         }
 
-        songArtist[key] = artist;
-        emit SongRegistered(collection, tokenId, artist);
+        bytes32 key = _registerSong(collection, tokenId, artist);
+        _setSplits(collection, tokenId, key, splits);
+
+        if (lockSongSplits) {
+            splitsLocked[key] = true;
+            emit SplitsLocked(collection, tokenId);
+        }
     }
 
     function configureSplits(
@@ -273,25 +326,7 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
             revert SplitsAreLocked();
         }
 
-        if (splits.length > 0) {
-            splits.validateSplits();
-        }
-
-        delete songSplits[key];
-        for (uint256 i; i < splits.length;) {
-            if (splits[i].recipient == address(this)) {
-                revert SplitToSelf();
-            }
-            if (splits[i].recipient == address(usdc)) {
-                revert SplitToUSDC();
-            }
-            songSplits[key].push(splits[i]);
-            unchecked {
-                ++i;
-            }
-        }
-
-        emit SplitsConfigured(collection, tokenId);
+        _setSplits(collection, tokenId, key, splits);
     }
 
     function lockSplits(
@@ -402,7 +437,187 @@ contract TortoiseMintRouter is Ownable2Step, ReentrancyGuardTransient, Pausable 
         return keccak256(abi.encode(collection, tokenId));
     }
 
+    function hashSplits(
+        SplitRecipient[] calldata splits
+    ) public pure returns (bytes32) {
+        return _hashSplits(splits);
+    }
+
+    function hashRegisterSongWithSplits(
+        address collection,
+        uint256 tokenId,
+        address artist,
+        bytes32 splitsHash,
+        bool lockSongSplits,
+        uint256 nonce,
+        uint256 deadline
+    ) external view returns (bytes32) {
+        return _hashRegisterSongWithSplits(
+            collection, tokenId, artist, splitsHash, lockSongSplits, nonce, deadline
+        );
+    }
+
     // ============ Internal Functions ============
+
+    function _validateSongRegistration(
+        address collection,
+        uint256 tokenId,
+        address artist
+    ) internal view {
+        if (collection == address(0) || artist == address(0)) {
+            revert ZeroAddress();
+        }
+        if (collection.code.length == 0) {
+            revert CollectionMustBeContract();
+        }
+
+        if (songArtist[songKey(collection, tokenId)] != address(0)) {
+            revert SongAlreadyRegistered();
+        }
+    }
+
+    function _registerSong(
+        address collection,
+        uint256 tokenId,
+        address artist
+    ) internal returns (bytes32 key) {
+        _validateSongRegistration(collection, tokenId, artist);
+
+        key = songKey(collection, tokenId);
+        songArtist[key] = artist;
+        emit SongRegistered(collection, tokenId, artist);
+    }
+
+    function _setSplits(
+        address collection,
+        uint256 tokenId,
+        bytes32 key,
+        SplitRecipient[] calldata splits
+    ) internal {
+        if (splits.length > 0) {
+            splits.validateSplits();
+        }
+
+        delete songSplits[key];
+        for (uint256 i; i < splits.length;) {
+            if (splits[i].recipient == address(this)) {
+                revert SplitToSelf();
+            }
+            if (splits[i].recipient == address(usdc)) {
+                revert SplitToUSDC();
+            }
+            songSplits[key].push(splits[i]);
+            unchecked {
+                ++i;
+            }
+        }
+
+        emit SplitsConfigured(collection, tokenId);
+    }
+
+    function _hashRegisterSongWithSplits(
+        address collection,
+        uint256 tokenId,
+        address artist,
+        bytes32 splitsHash,
+        bool lockSongSplits,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    REGISTER_SONG_WITH_SPLITS_TYPEHASH,
+                    collection,
+                    tokenId,
+                    artist,
+                    splitsHash,
+                    lockSongSplits,
+                    nonce,
+                    deadline
+                )
+            )
+        );
+    }
+
+    function _hashSplits(
+        SplitRecipient[] calldata splits
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(splits));
+    }
+
+    function _validateCollectItem(
+        CollectItem memory item
+    ) internal view returns (CollectQuote memory quote) {
+        bytes32 key = songKey(item.collection, item.tokenId);
+        if (songArtist[key] == address(0)) {
+            revert SongNotRegistered();
+        }
+        if (item.quantity == 0) {
+            revert ZeroQuantity();
+        }
+
+        InProcessSale memory sale =
+            IInProcessERC20Minter(inProcessMinter).sale(item.collection, item.tokenId);
+        if (sale.currency != address(usdc)) {
+            revert InvalidCurrency();
+        }
+        if (sale.fundsRecipient != address(this)) {
+            revert InvalidFundsRecipient();
+        }
+
+        uint256 totalCost = sale.pricePerToken * item.quantity;
+        if (totalCost == 0) {
+            revert ZeroCost();
+        }
+        if (totalCost > item.maxTotalCost) {
+            revert PriceExceedsMax();
+        }
+        _validateFeeMinimum(totalCost, platformFeeBps);
+        _validateFeeMinimum(sale.pricePerToken, stakingFeeBps);
+
+        quote = CollectQuote({key: key, sale: sale, totalCost: totalCost});
+    }
+
+    function _mintAndDistribute(
+        CollectItem memory item,
+        CollectQuote memory quote,
+        address collector,
+        uint256 expectedBalance
+    ) internal returns (uint256 balanceAfterDistribution) {
+        usdc.forceApprove(inProcessMinter, quote.totalCost);
+
+        IInProcessERC20Minter(inProcessMinter)
+            .mint(
+                collector,
+                item.quantity,
+                item.collection,
+                item.tokenId,
+                quote.totalCost,
+                address(usdc),
+                address(0),
+                ""
+            );
+
+        usdc.forceApprove(inProcessMinter, 0);
+
+        uint256 actualBalance = usdc.balanceOf(address(this));
+        if (actualBalance != expectedBalance) {
+            revert UnexpectedProceeds(expectedBalance, actualBalance);
+        }
+
+        _distribute(
+            item.collection,
+            item.tokenId,
+            quote.key,
+            quote.totalCost,
+            quote.sale.pricePerToken,
+            collector
+        );
+        emit SongCollected(item.collection, item.tokenId, collector, item.quantity, quote.totalCost);
+
+        return usdc.balanceOf(address(this));
+    }
 
     function _distribute(
         address collection,

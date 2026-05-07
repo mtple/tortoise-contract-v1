@@ -26,8 +26,8 @@ Two Tortoise contracts:
 | Component | Owner | Responsibility |
 |-----------|-------|----------------|
 | ERC-1155 NFTs | In Process | Token creation, metadata, minting infrastructure |
-| Song creation | Tortoise backend + In Process API | Creates moments with `payoutRecipient = TortoiseMintRouter` |
-| Collection flow | TortoiseMintRouter | Pulls USDC, collects through In Process, distributes revenue, credits TORT |
+| Song and album creation | Tortoise backend + In Process API | Uploads media, creates collections/moments with `payoutRecipient = TortoiseMintRouter`, and records album-track relationships |
+| Collection flow | TortoiseMintRouter | Pulls USDC, collects one or more In Process moments, distributes revenue, credits TORT |
 | Staking | TortoiseShell | TORT staking, USDC reward distribution, TORT crediting |
 | TORT token | Existing deployment | Ecosystem token |
 
@@ -37,7 +37,7 @@ Two Tortoise contracts:
 
 When an artist uploads a song through the Tortoise UI:
 
-1. Tortoise backend uploads audio and metadata to IPFS or Arweave.
+1. Tortoise backend uploads audio and metadata to Arweave using Arweave Turbo.
 2. Backend calls the In Process API `POST /moment/create` with:
    - `token.tokenMetadataURI`: Arweave URI with song metadata
    - `token.salesConfig.type`: `erc20Mint`
@@ -51,6 +51,295 @@ When an artist uploads a song through the Tortoise UI:
 Critical detail: `payoutRecipient` is set to TortoiseMintRouter. All sale USDC should flow to the router, which then distributes according to the Tortoise economic model. In Process's own split feature is not used for Tortoise revenue splits; Tortoise handles splits downstream.
 
 Because In Process is expected to take no fee, the router should require the USDC it receives to equal `pricePerToken * quantity`. This makes fee or payout behavior changes fail loudly instead of silently underpaying artists or the shell.
+
+### Album Upload And Collection Support
+
+Albums should be represented as In Process ERC-1155 collections. Each track is a separate moment/token ID within the album collection. Tortoise owns the album-level product model, upload queue, retry behavior, ordering, and local database records; In Process owns the deployed collection, token creation, metadata, and sale configuration.
+
+In Process does not currently expose a documented batch moment-create or batch paid-collect API. Tortoise should therefore make album publishing feel batch-native in the UI while executing the underlying work as a reliable orchestration over single-file uploads and single-moment creation calls.
+
+#### Upload Entry Points
+
+The artist upload flow should start with a collection decision instead of assuming every batch upload creates a new album:
+
+1. **Create a new album collection**
+   - Artist enters album title, album artwork, collection description, release metadata, and default sale settings.
+   - Backend creates the In Process collection through `POST /collections`.
+   - Backend stores the returned `collectionAddress` as the album's In Process collection.
+
+2. **Add tracks to an existing collection**
+   - Artist selects an existing Tortoise-managed collection that their wallet controls or that Tortoise has verified they may publish into.
+   - Backend uses that collection address for every selected track's `POST /moment/create` call.
+   - This supports adding bonus tracks, deluxe versions, or singles that later become part of an album.
+
+3. **Stage tracks before choosing a collection**
+   - Artist can upload files into a draft batch without immediately creating moments.
+   - The batch remains editable until the artist selects an existing collection or creates a new album collection.
+   - This path is useful when audio files are ready but album metadata, sale configuration, or release timing is not final.
+
+#### Backend Data Model
+
+Recommended backend records:
+
+```text
+Album
+  id
+  artistId
+  artistWallet
+  title
+  description
+  artworkUri
+  collectionAddress
+  collectionMetadataUri
+  status
+  createdAt
+  updatedAt
+
+AlbumTrack
+  id
+  albumId
+  artistId
+  title
+  trackNumber
+  audioUri
+  artworkUri
+  metadataUri
+  collectionAddress
+  tokenId
+  pricePerToken
+  maxSupply
+  status
+  failureReason
+  createdAt
+  updatedAt
+
+AlbumUploadBatch
+  id
+  artistId
+  targetAlbumId
+  targetCollectionAddress
+  mode
+  status
+  createdAt
+  updatedAt
+
+AlbumUploadItem
+  id
+  batchId
+  sourceFileName
+  trackTitle
+  trackNumber
+  audioUri
+  artworkUri
+  metadataUri
+  collectionAddress
+  tokenId
+  status
+  failureReason
+  createdAt
+  updatedAt
+```
+
+The backend may collapse `AlbumTrack` and `AlbumUploadItem` if product scope is small, but keeping them separate makes retries and drafts cleaner: upload items describe work in progress, while album tracks describe the published catalog.
+
+#### Upload And Publish State Machine
+
+Each upload item should move independently through a retryable state machine:
+
+```text
+draft
+uploading_media
+media_uploaded
+metadata_uploaded
+ready_to_publish
+creating_moment
+published
+failed
+```
+
+The batch has an aggregate status derived from item states:
+
+```text
+draft
+uploading
+ready_to_publish
+publishing
+partially_published
+published
+failed
+cancelled
+```
+
+Failed items should be retryable without re-uploading successfully stored media. If media upload succeeds but moment creation fails, the retry should resume from `metadata_uploaded` or `ready_to_publish`. If a moment is created but backend persistence fails, reconciliation should query In Process or chain/indexer data before attempting another create call, to avoid duplicate token creation.
+
+#### Publish Workflow
+
+For a new album:
+
+```text
+Artist selects "New album collection"
+  |
+  +-- Backend uploads album artwork and collection metadata
+  |
+  +-- Backend creates the In Process collection
+  |
+  +-- Backend uploads each track's media and token metadata
+  |
+  +-- Backend calls POST /moment/create once per track
+  |       contract.address = album collection
+  |       token.tokenMetadataURI = track metadata URI
+  |       token.salesConfig.type = erc20Mint
+  |       token.salesConfig.currency = Base USDC
+  |       token.salesConfig.pricePerToken = track price
+  |       token.payoutRecipient = TortoiseMintRouter
+  |
+  +-- Backend stores each returned tokenId
+  |
+  +-- Backend registers each (collection, tokenId, artist) with TortoiseMintRouter
+        using registerSongWithSplits when artist-approved splits should be live immediately
+```
+
+For an existing collection:
+
+```text
+Artist selects existing collection
+  |
+  +-- Backend verifies collection ownership/control
+  |
+  +-- Backend uploads each track's media and token metadata
+  |
+  +-- Backend calls POST /moment/create once per track using that collection address
+  |
+  +-- Backend stores and registers each returned tokenId
+```
+
+The backend should not use In Process splits for Tortoise revenue splits. Every album track should still set `payoutRecipient = TortoiseMintRouter`, and artist/collaborator splits should be configured on TortoiseMintRouter per `(collection, tokenId)`.
+
+For album tracks with collaborators, the preferred launch path is `registerSongWithSplits`: the artist signs the initial split hash, lock choice, nonce, and deadline; the backend/operator submits the registration and initial split table in one transaction. This removes the window where a newly published track is registered but still defaults all artist revenue to the primary artist.
+
+#### Collection Picker Rules
+
+The collection picker should show only collections that are safe publication targets:
+
+- Collections created through Tortoise for the connected artist.
+- Collections whose owner/admin relationship has been verified by wallet signature, In Process API data, or chain reads.
+- Collections using an In Process contract implementation compatible with the allowlisted minter and router collect flow.
+
+The UI should clearly distinguish:
+
+- `New album collection`: creates a fresh In Process collection.
+- `Existing album collection`: adds tracks to a known album.
+- `Draft only`: uploads files and metadata without publishing moments yet.
+
+#### Album-Level Defaults
+
+Album upload should allow defaults that can be overridden per track:
+
+- Price per token. Default is $1.00 in Base USDC units.
+- Currency. Always Base USDC for v1.
+- Sale start. Default is immediate on publish.
+- Sale end. Default is no end time.
+- Max supply. Default is open edition/unlimited.
+- Artwork fallback. Default is the album artwork.
+- Artist revenue split recipients. Album-level splits are copied to each track unless overridden.
+- Track ordering.
+- Storage provider. Always Arweave Turbo for v1.
+
+Per-track overrides:
+
+- Track title.
+- Track number/order.
+- Audio file.
+- Optional track artwork.
+- Optional price override.
+- Optional max supply override.
+- Optional split override when collaborators differ by track.
+
+System-fixed fields that artists should not edit:
+
+- Chain.
+- Currency.
+- Router payout recipient.
+- Storage provider.
+- In Process sale type.
+
+The backend should snapshot the effective per-track settings at publish time. Later album edits should not silently mutate already-published sale configs unless the product intentionally exposes sale updates.
+
+#### Batch Collection UX
+
+Collectors should be able to collect:
+
+- The full album.
+- Selected tracks.
+- All selected tracks regardless of existing ownership. The initial album collect UX should not attempt ownership detection or auto-skip already-owned tracks.
+
+The frontend should present an aggregate quote before transaction submission:
+
+```text
+Album total = sum(pricePerToken * quantity per selected track)
+Platform fee = included in listed prices
+TORT credit = first eligible collect per wallet per track
+```
+
+Collectors approve USDC to TortoiseMintRouter once. The collect transaction should call TortoiseMintRouter directly, not the In Process API, so payment routing, staking rewards, and full-proceeds checks remain trust-minimized and atomic.
+
+#### On-Chain Batch Collect
+
+Add router support for batch paid collection:
+
+```solidity
+struct CollectItem {
+    address collection;
+    uint256 tokenId;
+    uint256 quantity;
+    uint256 maxTotalCost;
+}
+
+function batchCollect(
+    CollectItem[] calldata items,
+    uint256 maxAggregateCost
+) external nonReentrant whenNotPaused;
+```
+
+`batchCollect` should be an atomic wrapper around the same validation, mint, balance-delta check, distribution, and TORT credit logic used by `collect()`.
+
+Expected behavior:
+
+- Revert when `items.length == 0`.
+- Enforce a configurable or constant maximum batch size to avoid gas exhaustion.
+- Validate every item is registered before pulling funds.
+- Validate sale currency is USDC and funds recipient is TortoiseMintRouter for every item.
+- Validate each `pricePerToken * quantity <= item.maxTotalCost`.
+- Validate aggregate cost is nonzero and `<= maxAggregateCost`.
+- Pull aggregate USDC from the collector once.
+- Approve and mint each item through the allowlisted In Process ERC20 minter.
+- Verify full proceeds after each mint or after each item-specific mint step.
+- Distribute revenue per item, not at the aggregate level, so artist splits and TORT credit accounting remain per track.
+- Emit the existing per-song events plus a batch-level event.
+
+The batch function should not introduce album-specific trust into the contract. It should accept any registered `(collection, tokenId)` pairs, which lets the frontend batch a full album, selected album tracks, or a mixed cart without requiring the router to store album metadata.
+
+Suggested event and errors:
+
+```solidity
+event BatchCollected(address indexed collector, uint256 itemCount, uint256 totalPaid);
+
+error EmptyBatch();
+error BatchTooLarge();
+error AggregatePriceExceedsMax();
+```
+
+#### Batch Collect Fee Semantics
+
+Batch collect should preserve the current per-song economics:
+
+- Platform fee is calculated on each item's `totalCost`.
+- Staking fee eligibility is calculated per `(collection, tokenId, collector)`.
+- TORT credit is awarded at most once per wallet per track.
+- A repeated collect of the same track in the same batch should mint the requested quantity but only receive one TORT credit for that track.
+- If shell credit cannot be fully applied for a track, that track's staking fee routes to artist revenue according to the existing single-collect behavior.
+
+The total result of a batch collect should match the result of executing the same item list through repeated `collect()` calls, except that the user pays approval and transaction overhead once.
 
 ### Collection Flow
 
@@ -94,10 +383,11 @@ The collector approves USDC to TortoiseMintRouter only. The router handles all d
 TortoiseMintRouter is a payment routing contract that wraps In Process collects. It has no ERC-1155 logic, no token storage, and no metadata logic. It:
 
 - Accepts USDC from collectors
-- Triggers the In Process collect or mint call, with the NFT going to the collector
+- Triggers one or more In Process collect or mint calls, with NFTs going to the collector
 - Receives full sale proceeds as `payoutRecipient`, `fundsRecipient`, or the equivalent In Process payout field
-- Splits USDC into platform fee, reward-eligible staking fee, and artist revenue
-- Credits TORT to the collector's shell
+- Splits USDC into platform fee, reward-eligible staking fee, and artist revenue per song
+- Credits TORT to the collector's shell per eligible song
+- Supports album-level and cart-level collection through `batchCollect()` without storing album metadata on-chain
 
 ### State
 
@@ -111,6 +401,7 @@ uint256 public platformFeeBps; // Default: 500, or 5%
 uint256 public stakingFeeBps;  // Default: 1000, or 10%
 uint256 public constant BASIS_POINTS = 10_000;
 uint256 public constant MAX_FEE_BPS = 2_000;
+uint256 public constant MAX_BATCH_ITEMS = 30;
 
 mapping(bytes32 => SplitRecipient[]) internal songSplits;
 mapping(bytes32 => address) public songArtist;
@@ -124,6 +415,13 @@ address public owner;
 ### Key Functions
 
 ```solidity
+struct CollectItem {
+    address collection;
+    uint256 tokenId;
+    uint256 quantity;
+    uint256 maxTotalCost;
+}
+
 function collect(
     address collection,
     uint256 tokenId,
@@ -131,10 +429,25 @@ function collect(
     uint256 maxTotalCost
 ) external nonReentrant whenNotPaused;
 
+function batchCollect(
+    CollectItem[] calldata items,
+    uint256 maxAggregateCost
+) external nonReentrant whenNotPaused;
+
 function registerSong(
     address collection,
     uint256 tokenId,
     address artist
+) external onlyOwner;
+
+function registerSongWithSplits(
+    address collection,
+    uint256 tokenId,
+    address artist,
+    SplitRecipient[] calldata splits,
+    bool lockSongSplits,
+    uint256 deadline,
+    bytes calldata artistSignature
 ) external onlyOwner;
 
 function configureSplits(
@@ -150,6 +463,10 @@ function updateInProcessMinter(address newMinter) external onlyOwner;
 
 The router should keep the collector-facing interface narrow. It should call the In Process ERC20 minter directly with zero mint referral and an empty comment unless a later product requirement needs those fields.
 
+`batchCollect()` should use shared internal helpers with `collect()` rather than duplicate payment logic. The single-collect path can wrap one `CollectItem`, or both public functions can call a shared `_collectItem()` routine after aggregate validation and USDC transfer.
+
+`registerSongWithSplits()` should use EIP-712 artist authorization so the operator can preload initial album splits atomically without gaining unilateral split-setting power. The signed payload should cover collection, token ID, artist, split hash, lock flag, artist nonce, and deadline.
+
 ### Collect Flow
 
 ```solidity
@@ -163,9 +480,9 @@ function collect(
     require(songArtist[songKey] != address(0), "Song not registered");
     require(quantity > 0, "Zero quantity");
 
-    InProcessSale memory sale = IInProcessMinter(inProcessMinter).sale(collection, tokenId);
+    InProcessSale memory sale = IInProcessERC20Minter(inProcessMinter).sale(collection, tokenId);
     require(sale.currency == address(usdc), "Invalid currency");
-    require(sale.payoutRecipient == address(this), "Invalid payout recipient");
+    require(sale.fundsRecipient == address(this), "Invalid funds recipient");
 
     uint256 pricePerToken = sale.pricePerToken;
     uint256 totalCost = pricePerToken * quantity;
@@ -201,6 +518,23 @@ function collect(
     emit SongCollected(collection, tokenId, msg.sender, quantity, totalCost);
 }
 ```
+
+For `batchCollect()`, the balance check needs to account for the aggregate pre-funded balance:
+
+```text
+preBalance = usdc.balanceOf(router)
+pull aggregateCost from collector
+expectedBalance = preBalance + aggregateCost
+
+for each item:
+  approve item cost to In Process minter
+  mint item to collector
+  require usdc.balanceOf(router) == expectedBalance
+  distribute item revenue
+  expectedBalance = usdc.balanceOf(router)
+```
+
+This preserves the same full-proceeds invariant as `collect()` while allowing the router to pull USDC once for the whole album/cart.
 
 The deployed minter ABI also includes:
 
@@ -268,6 +602,8 @@ function _creditShell(
 ### Song Pricing
 
 Song price is set when the moment is created through the In Process API using `salesConfig.pricePerToken`. The router reads this price from the verified In Process sale config view. The router does not store prices.
+
+The default song price is $1.00, represented as `1000000` for Base USDC's 6 decimals. The backend may still persist the configured per-song price so product surfaces can quote albums without reading every sale config on-chain.
 
 Fees are inclusive: they are taken from the sale price, not added on top.
 
@@ -343,10 +679,11 @@ event ShellCreditFailed(address indexed collection, uint256 indexed tokenId, add
 event SongRegistered(address indexed collection, uint256 indexed tokenId, address indexed artist);
 event SplitsConfigured(address indexed collection, uint256 indexed tokenId);
 event SplitsLocked(address indexed collection, uint256 indexed tokenId);
+event BatchCollected(address indexed collector, uint256 itemCount, uint256 totalPaid);
 event InProcessMinterUpdated(address indexed oldMinter, address indexed newMinter);
 ```
 
-Custom errors should be preferred over revert strings in implementation, including an `UnexpectedProceeds(expectedBalance, actualBalance)` error for balance mismatch.
+Custom errors should be preferred over revert strings in implementation, including an `UnexpectedProceeds(expectedBalance, actualBalance)` error for balance mismatch and `EmptyBatch`, `BatchTooLarge`, and `AggregatePriceExceedsMax` errors for batch collection validation.
 
 ## TortoiseShell
 
@@ -381,10 +718,16 @@ The current TortoiseShell reward math, TORT credit mechanics, pause behavior, an
 - **Full proceeds verification:** after the In Process collect, require router USDC balance to equal pre-collect balance plus `pricePerToken * quantity`. Any protocol fee, transfer slippage, or unexpected payout behavior should revert.
 - **Live no-fee validation:** the current Base In Process minter exposes Zora-style reward config, but live values are `totalRewardPct = 0` and `ethRewardAmount = 0`. Deployment scripts and fork tests should assert those values for the allowlisted minter.
 - **Sale config validation:** require registered song, nonzero quantity, USDC currency, router payout recipient, nonzero price, and `totalCost <= maxTotalCost`.
+- **Batch collect validation:** validate all items and aggregate cost before pulling USDC. A batch collect should be atomic and should revert the entire transaction if any selected song cannot be collected.
+- **Batch size cap:** keep a hard maximum batch size to avoid accidental out-of-gas failures and unbounded external calls.
+- **Album metadata off-chain:** the router should not store album IDs, track ordering, or collection picker state. It only needs registered `(collection, tokenId)` pairs.
+- **Atomic initial splits:** collaborator tracks should use artist-signed `registerSongWithSplits()` before public launch, or be explicitly launched with no splits. Avoid a registration-to-split configuration gap.
+- **Upload authorization:** backend album upload must verify the artist can publish to the target collection before calling the In Process API.
+- **Upload idempotency:** backend retries must avoid duplicate moment creation after partial failures. Persist external request state and reconcile created moments before retrying `POST /moment/create`.
 - **Shell disabled plus staking fee:** `updateTortoiseShell(address(0))` auto-zeros `stakingFeeBps`, and non-zero staking fee requires a configured shell.
 - **Fee cap:** `platformFeeBps + stakingFeeBps` must be less than `BASIS_POINTS`.
 - **Shell credit try/catch:** shell graceful degradation, router try/catch, and shell kill switch all preserve collection flow. Staking fees are charged only for a unit that receives a full TORT credit.
-- **Reentrancy:** `collect()` is `nonReentrant`; In Process minting is an external call.
+- **Reentrancy:** `collect()` and `batchCollect()` are `nonReentrant`; In Process minting is an external call.
 - **Front-run protection:** `maxTotalCost` lets the collector cap total USDC paid.
 - **Approval hygiene:** prefer resetting USDC approval to zero after minting, or using a bounded force-approve helper if the chosen USDC interface requires it.
 - **Artist payout safety:** preserve the pending-claim/deferred-transfer pattern for artist and split payments so a bad recipient cannot block future collects.
@@ -412,6 +755,14 @@ The current TortoiseShell reward math, TORT credit mechanics, pause behavior, an
 TortoiseMintRouter:
 
 - Single-copy and multi-copy `collect()`.
+- `batchCollect()` with one item, multiple items in one collection, multiple collections, and mixed quantities.
+- `batchCollect()` result matches repeated `collect()` calls for platform fees, staking fees, artist revenue, pending claims, and TORT credit.
+- Revert when batch is empty or exceeds maximum size.
+- Revert when aggregate cost exceeds `maxAggregateCost`.
+- Revert the entire batch when any item is unregistered, has invalid currency, has invalid funds recipient, exceeds item max cost, or receives unexpected proceeds.
+- Repeated same-song entries in one batch mint all requested quantity but credit TORT at most once for that wallet/song.
+- 30-item batch gas proof with realistic shell crediting and max router split count.
+- `registerSongWithSplits()` stores artist-approved splits atomically, respects the lock flag, rejects invalid signatures, and rejects expired signatures.
 - Revenue split math for 5% platform, 10% staking, 85% artist.
 - Artist split configuration, lock behavior, and edge cases.
 - Shell disabled behavior.
@@ -435,10 +786,23 @@ TortoiseShell:
 - Access control.
 - Pause behavior.
 
+Backend album orchestration:
+
+- New album collection creation.
+- Existing collection picker and authorization checks.
+- Draft-only upload batches.
+- Per-track media upload, metadata upload, moment creation, router registration, and status transitions.
+- Retry from each failure state without duplicating already-created moments.
+- Partial publish behavior where some tracks are published and failed tracks remain retryable.
+- Album-level defaults overridden per track.
+- Reconciliation when In Process creates a moment but backend persistence fails.
+
 ### Fuzz And Invariant Tests
 
 - Fuzz random fees, quantities, and prices to ensure distribution sums correctly.
 - Invariant: router should not retain unexpected USDC after `collect()`.
+- Invariant: router should not retain unexpected USDC after `batchCollect()`.
+- Invariant: batch distribution equals repeated single distribution for the same item sequence.
 - Invariant: shell accounting remains solvent across stake, withdraw, reward, claim, emergency withdraw, and credit paths.
 
 ### Fork Tests
@@ -460,6 +824,7 @@ TortoiseShell:
 - **Live minter fee config:** Base RPC returns `totalRewardPct() == 0`, `ethRewardAmount() == 0`, and `getERC20MinterConfig().rewardRecipientPercentage == 0`.
 - **Open edition max supply:** omit `maxSupply` for unlimited. The SDK default is `18446744073709551615`. Do not use `0` to mean unlimited.
 - **Moment API auth:** the public In Process client calls `POST https://api.inprocess.world/api/moment/create` with JSON content headers and no visible bearer token or API key.
+- **Upload storage:** audio, artwork, token metadata JSON, and collection metadata should be uploaded to Arweave through Arweave Turbo.
 
 ## Deployment Shape
 
@@ -471,6 +836,8 @@ TortoiseShell:
 5. Fund the TortoiseShell TORT pool.
 6. Set tortRewardPerCollection.
 7. Update backend so new moments use the router address as `payoutRecipient`.
+8. Add backend album tables and upload queues for albums, album tracks, upload batches, and upload items.
+9. Add frontend flows for new album collection, existing collection selection, draft-only upload, full-album collect, and selected-track collect.
 ```
 
 Validation is mainnet-oriented. There is no required Base Sepolia testing path in this plan.
@@ -488,7 +855,7 @@ The archived files are for historical reference and migration reasoning only. Ne
 ### From v0.3
 
 - New songs go through In Process via TortoiseMintRouter.
-- v0.3 NFTs remain on the old contract.
+- v0.3 NFTs remain on the old contract. Existing v0.3 songs should not be re-created on In Process as part of v1 launch.
 - The old contract source remains available in the legacy archive folder, but it is no longer part of the active deployment path.
 
 ### From Old Staker/FeePool
@@ -497,14 +864,22 @@ The archived files are for historical reference and migration reasoning only. Ne
 - Users migrate to TortoiseShell.
 - Frontend exposes a "Migrate Your Shell" flow.
 
-## Open Questions
+## Decisions
 
-- **Song price:** $1.00 default, or variable per artist?
-- **TORT reward per collection:** amount TBD.
+- **Song price:** default to $1.00 per song, encoded as `1000000` Base USDC units.
+- **Existing v0.3 songs:** leave as-is on the old contract; do not re-create on In Process for v1 launch.
+- **In Process API operations:** non-issue for v1. No special allowlisting, rate-limit handling, or backend service agreement is expected to be needed.
+- **Album collection creation path:** use `POST /collections` first, then call `POST /moment/create` once per track.
+- **Batch collect size:** cap at 30 line items.
+- **Album defaults:** use album-level defaults for price, currency, sale window, max supply, artwork fallback, splits, ordering, and storage; allow per-track overrides for track metadata, artwork, price, max supply, and track-specific splits.
+- **Ownership detection:** none for initial album collect; full-album collect should collect all album tracks.
+- **Upload storage:** use Arweave Turbo for audio, artwork, token metadata JSON, and collection metadata.
+
+## Remaining TBDs And Validation
+
+- **TORT reward per collection:** TBD.
 - **Initial TORT pool size:** model launch volume against available TORT budget.
 - **No-fee fork proof:** mainnet fork should prove a full collect leaves the router with exactly `pricePerToken * quantity`; live minter config already reports zero reward pct and zero ETH reward.
-- **Existing v0.3 songs:** re-create on In Process or leave as-is?
-- **In Process API operations:** confirm whether production usage needs allowlisting, rate-limit handling, or a backend service agreement even though the public client does not show API auth.
 
 ## Reference Addresses
 

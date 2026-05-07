@@ -21,18 +21,24 @@ contract TortoiseMintRouterTest is Test {
 
     address public owner = address(this);
     address public collector = makeAddr("collector");
-    address public artist = makeAddr("artist");
+    address public artist;
     address public platform = makeAddr("platform");
     address public splitA = makeAddr("splitA");
     address public splitB = makeAddr("splitB");
     address public feeRecipient = makeAddr("feeRecipient");
 
     uint256 public constant TOKEN_ID = 1;
+    uint256 public constant TOKEN_ID_TWO = 2;
     uint256 public constant PRICE = 1e6;
+    uint256 public constant PRICE_TWO = 2e6;
     uint256 public constant PLATFORM_FEE_BPS = 500;
     uint256 public constant STAKING_FEE_BPS = 1000;
 
+    uint256 internal artistKey;
+
     function setUp() public {
+        (artist, artistKey) = makeAddrAndKey("artist");
+
         usdc = new MockUSDC();
         minter = new MockInProcessMinter();
         shell = new MockTortoiseShell();
@@ -107,6 +113,208 @@ contract TortoiseMintRouterTest is Test {
         assertEq(shell.rewardsDeposited(), 0.1e6);
         assertEq(shell.creditedQuantity(collector), 1);
         assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 2);
+    }
+
+    function test_batchCollectSingleItemMatchesCollect() public {
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](1);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        router.batchCollect(items, PRICE);
+
+        assertEq(usdc.balanceOf(platform), 0.05e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.1e6);
+        assertEq(usdc.balanceOf(artist), 0.85e6);
+        assertEq(usdc.balanceOf(address(router)), 0);
+        assertEq(shell.rewardsDeposited(), 0.1e6);
+        assertEq(shell.depositCalls(), 1);
+        assertEq(shell.creditCalls(), 1);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 1);
+        assertEq(usdc.allowance(address(router), address(minter)), 0);
+    }
+
+    function test_batchCollectMultipleItemsSameCollectionWithMixedQuantities() public {
+        _registerSong(address(collection), TOKEN_ID_TWO, PRICE_TWO, artist);
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](2);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+        items[1] = _item(address(collection), TOKEN_ID_TWO, 2, 2 * PRICE_TWO);
+
+        vm.prank(collector);
+        router.batchCollect(items, PRICE + 2 * PRICE_TWO);
+
+        assertEq(usdc.balanceOf(platform), 0.25e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.3e6);
+        assertEq(usdc.balanceOf(artist), 4.45e6);
+        assertEq(usdc.balanceOf(address(router)), 0);
+        assertEq(shell.rewardsDeposited(), 0.3e6);
+        assertEq(shell.depositCalls(), 2);
+        assertEq(shell.creditCalls(), 2);
+        assertEq(shell.creditedQuantity(collector), 2);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 1);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID_TWO), collector), 2);
+    }
+
+    function test_batchCollectMultipleCollections() public {
+        MockCollection secondCollection = new MockCollection();
+        _registerSong(address(secondCollection), TOKEN_ID, PRICE, artist);
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](2);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+        items[1] = _item(address(secondCollection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        router.batchCollect(items, 2 * PRICE);
+
+        assertEq(usdc.balanceOf(platform), 0.1e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.2e6);
+        assertEq(usdc.balanceOf(artist), 1.7e6);
+        assertEq(shell.depositCalls(), 2);
+        assertEq(shell.creditedQuantity(collector), 2);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 1);
+        assertEq(minter.minted(router.songKey(address(secondCollection), TOKEN_ID), collector), 1);
+    }
+
+    function test_batchCollectRepeatedSameSongCreditsTortOnce() public {
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](2);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+        items[1] = _item(address(collection), TOKEN_ID, 2, 2 * PRICE);
+
+        vm.prank(collector);
+        router.batchCollect(items, 3 * PRICE);
+
+        bytes32 key = router.songKey(address(collection), TOKEN_ID);
+        assertTrue(router.tortRewardClaimed(key, collector));
+        assertEq(usdc.balanceOf(platform), 0.15e6);
+        assertEq(usdc.balanceOf(address(shell)), 0.1e6);
+        assertEq(usdc.balanceOf(artist), 2.75e6);
+        assertEq(shell.depositCalls(), 1);
+        assertEq(shell.creditCalls(), 1);
+        assertEq(shell.creditedQuantity(collector), 1);
+        assertEq(minter.minted(key, collector), 3);
+    }
+
+    function test_batchCollectRevertsEmptyBatch() public {
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](0);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.EmptyBatch.selector);
+        router.batchCollect(items, 0);
+    }
+
+    function test_batchCollectRevertsBatchTooLarge() public {
+        TortoiseMintRouter.CollectItem[] memory items =
+            new TortoiseMintRouter.CollectItem[](router.MAX_BATCH_ITEMS() + 1);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.BatchTooLarge.selector);
+        router.batchCollect(items, 0);
+    }
+
+    function test_batchCollectRevertsWhenAggregatePriceExceedsMax() public {
+        _registerSong(address(collection), TOKEN_ID_TWO, PRICE, artist);
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](2);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+        items[1] = _item(address(collection), TOKEN_ID_TWO, 1, PRICE);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.AggregatePriceExceedsMax.selector);
+        router.batchCollect(items, 2 * PRICE - 1);
+    }
+
+    function test_batchCollectValidatesAllItemsBeforePullingFunds() public {
+        MockCollection otherCollection = new MockCollection();
+        minter.setSale(address(otherCollection), TOKEN_ID, PRICE, address(router), address(usdc));
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](2);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+        items[1] = _item(address(otherCollection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.SongNotRegistered.selector);
+        router.batchCollect(items, 2 * PRICE);
+
+        assertEq(usdc.balanceOf(address(router)), 0);
+        assertEq(usdc.balanceOf(platform), 0);
+        assertEq(minter.minted(router.songKey(address(collection), TOKEN_ID), collector), 0);
+    }
+
+    function test_batchCollectRevertsWhenItemPriceExceedsMax() public {
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](1);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE - 1);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.PriceExceedsMax.selector);
+        router.batchCollect(items, PRICE);
+    }
+
+    function test_batchCollectRevertsInvalidCurrency() public {
+        MockUSDC otherToken = new MockUSDC();
+        minter.setSale(address(collection), TOKEN_ID, PRICE, address(router), address(otherToken));
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](1);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.InvalidCurrency.selector);
+        router.batchCollect(items, PRICE);
+    }
+
+    function test_batchCollectRevertsInvalidFundsRecipient() public {
+        minter.setSale(address(collection), TOKEN_ID, PRICE, artist, address(usdc));
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](1);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        vm.expectRevert(TortoiseMintRouter.InvalidFundsRecipient.selector);
+        router.batchCollect(items, PRICE);
+    }
+
+    function test_batchCollectRevertsWhenMinterTakesFee() public {
+        minter.setFee(1000, feeRecipient);
+
+        TortoiseMintRouter.CollectItem[] memory items = new TortoiseMintRouter.CollectItem[](1);
+        items[0] = _item(address(collection), TOKEN_ID, 1, PRICE);
+
+        vm.prank(collector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TortoiseMintRouter.UnexpectedProceeds.selector, PRICE, (PRICE * 9000) / 10_000
+            )
+        );
+        router.batchCollect(items, PRICE);
+
+        assertEq(usdc.balanceOf(feeRecipient), 0);
+    }
+
+    function test_batchCollectMaxSizeWithMaxSplitsGasProof() public {
+        uint256 itemCount = router.MAX_BATCH_ITEMS();
+        TortoiseMintRouter.CollectItem[] memory items =
+            new TortoiseMintRouter.CollectItem[](itemCount);
+        SplitRecipient[] memory splits = _tenWaySplits();
+
+        vm.pauseGasMetering();
+        for (uint256 i; i < itemCount; i++) {
+            uint256 tokenId = 1000 + i;
+            _registerSong(address(collection), tokenId, PRICE, artist);
+            vm.prank(artist);
+            router.configureSplits(address(collection), tokenId, splits);
+            items[i] = _item(address(collection), tokenId, 1, PRICE);
+        }
+        vm.resumeGasMetering();
+
+        uint256 gasBefore = gasleft();
+        vm.prank(collector);
+        router.batchCollect(items, itemCount * PRICE);
+        uint256 gasUsed = gasBefore - gasleft();
+
+        assertLt(gasUsed, 25_000_000);
+        assertEq(shell.depositCalls(), itemCount);
+        assertEq(shell.creditedQuantity(collector), itemCount);
+        assertEq(usdc.balanceOf(address(router)), 0);
     }
 
     function test_collectRevertsWhenPlatformFeeRoundsToZero() public {
@@ -245,6 +453,76 @@ contract TortoiseMintRouterTest is Test {
         assertEq(usdc.balanceOf(splitA), 0.51e6);
         assertEq(usdc.balanceOf(splitB), 0.34e6);
         assertEq(usdc.balanceOf(artist), 0);
+    }
+
+    function test_registerSongWithSplitsAtomicallyConfiguresAndLocksSplits() public {
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient({recipient: splitA, percentage: 6000});
+        splits[1] = SplitRecipient({recipient: splitB, percentage: 4000});
+
+        minter.setSale(address(collection), TOKEN_ID_TWO, PRICE, address(router), address(usdc));
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory signature =
+            _signRegisterSongWithSplits(address(collection), TOKEN_ID_TWO, splits, true, deadline);
+
+        router.registerSongWithSplits(
+            address(collection), TOKEN_ID_TWO, artist, splits, true, deadline, signature
+        );
+
+        SplitRecipient[] memory storedSplits =
+            router.getSongSplits(address(collection), TOKEN_ID_TWO);
+        assertEq(router.songArtist(router.songKey(address(collection), TOKEN_ID_TWO)), artist);
+        assertEq(storedSplits.length, 2);
+        assertEq(storedSplits[0].recipient, splitA);
+        assertEq(storedSplits[0].percentage, 6000);
+        assertEq(storedSplits[1].recipient, splitB);
+        assertEq(storedSplits[1].percentage, 4000);
+        assertTrue(router.splitsLocked(router.songKey(address(collection), TOKEN_ID_TWO)));
+
+        vm.prank(artist);
+        vm.expectRevert(TortoiseMintRouter.SplitsAreLocked.selector);
+        router.configureSplits(address(collection), TOKEN_ID_TWO, splits);
+
+        vm.prank(collector);
+        router.collect(address(collection), TOKEN_ID_TWO, 1, PRICE);
+
+        assertEq(usdc.balanceOf(splitA), 0.51e6);
+        assertEq(usdc.balanceOf(splitB), 0.34e6);
+        assertEq(usdc.balanceOf(artist), 0);
+    }
+
+    function test_registerSongWithSplitsRequiresArtistSignature() public {
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient({recipient: splitA, percentage: 6000});
+        splits[1] = SplitRecipient({recipient: splitB, percentage: 4000});
+
+        minter.setSale(address(collection), TOKEN_ID_TWO, PRICE, address(router), address(usdc));
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory signature =
+            _signRegisterSongWithSplits(address(collection), TOKEN_ID_TWO, splits, true, deadline);
+
+        vm.expectRevert(TortoiseMintRouter.InvalidArtistSignature.selector);
+        router.registerSongWithSplits(
+            address(collection), TOKEN_ID_TWO, artist, splits, false, deadline, signature
+        );
+    }
+
+    function test_registerSongWithSplitsRejectsExpiredSignature() public {
+        SplitRecipient[] memory splits = new SplitRecipient[](2);
+        splits[0] = SplitRecipient({recipient: splitA, percentage: 6000});
+        splits[1] = SplitRecipient({recipient: splitB, percentage: 4000});
+
+        minter.setSale(address(collection), TOKEN_ID_TWO, PRICE, address(router), address(usdc));
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory signature =
+            _signRegisterSongWithSplits(address(collection), TOKEN_ID_TWO, splits, true, deadline);
+
+        vm.warp(deadline + 1);
+
+        vm.expectRevert(TortoiseMintRouter.SignatureExpired.selector);
+        router.registerSongWithSplits(
+            address(collection), TOKEN_ID_TWO, artist, splits, true, deadline, signature
+        );
     }
 
     function test_deferredClaimTimestampPreservesFirstFailure() public {
@@ -458,5 +736,58 @@ contract TortoiseMintRouterTest is Test {
         assertEq(rewardRecipient, address(0));
         assertEq(rewardPct, 0);
         assertEq(ethReward, 0);
+    }
+
+    function _registerSong(
+        address songCollection,
+        uint256 tokenId,
+        uint256 price,
+        address songArtist
+    ) internal {
+        minter.setSale(songCollection, tokenId, price, address(router), address(usdc));
+        router.registerSong(songCollection, tokenId, songArtist);
+    }
+
+    function _item(
+        address songCollection,
+        uint256 tokenId,
+        uint256 quantity,
+        uint256 maxTotalCost
+    ) internal pure returns (TortoiseMintRouter.CollectItem memory) {
+        return TortoiseMintRouter.CollectItem({
+            collection: songCollection,
+            tokenId: tokenId,
+            quantity: quantity,
+            maxTotalCost: maxTotalCost
+        });
+    }
+
+    function _tenWaySplits() internal view returns (SplitRecipient[] memory splits) {
+        splits = new SplitRecipient[](10);
+        splits[0] = SplitRecipient({recipient: splitA, percentage: 1000});
+        splits[1] = SplitRecipient({recipient: splitB, percentage: 1000});
+        for (uint256 i = 2; i < splits.length; i++) {
+            splits[i] = SplitRecipient({recipient: address(uint160(100 + i)), percentage: 1000});
+        }
+    }
+
+    function _signRegisterSongWithSplits(
+        address songCollection,
+        uint256 tokenId,
+        SplitRecipient[] memory splits,
+        bool lockSongSplits,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 digest = router.hashRegisterSongWithSplits(
+            songCollection,
+            tokenId,
+            artist,
+            router.hashSplits(splits),
+            lockSongSplits,
+            router.splitAuthorizationNonces(artist),
+            deadline
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(artistKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 }
