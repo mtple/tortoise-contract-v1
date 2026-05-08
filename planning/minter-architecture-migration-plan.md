@@ -8,8 +8,6 @@ This plan also changes the payment currency from USDC to native ETH.
 
 Use the In Process contracts directly instead of the hosted In Process API for the core creation and collect flow.
 
-Tortoise does not need moments to appear in the In Process app. Tortoise will own display, indexing, album data, sale data, comments, collector views, and UI. In Process is used as the deployed ERC-1155 creator contract system.
-
 The custom minter is the preferred architecture because it owns the full collect path:
 
 1. Receive ETH from the payer.
