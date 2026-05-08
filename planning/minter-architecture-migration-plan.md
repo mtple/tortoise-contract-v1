@@ -12,10 +12,10 @@ Tortoise does not need moments to appear in the In Process app. Tortoise will ow
 
 The custom minter is the preferred architecture because it owns the full collect path:
 
-1. Receive ETH from the collector.
-2. Mint the In Process ERC-1155 token to the collector via `adminMint`.
-3. Distribute platform fees, staking fees, and artist splits.
-4. Credit TortoiseShell.
+1. Receive ETH from the payer.
+2. Mint the In Process ERC-1155 token to `mintTo` via `adminMint`.
+3. Credit TortoiseShell for the recipient if eligible.
+4. Distribute platform fees, staking fees, and artist splits, with staking fees deposited only after successful shell credit.
 5. Emit Tortoise-native events for indexing.
 
 The router architecture should be treated as superseded. Its useful pieces are the fee logic, splits logic, shell-credit behavior, batch collect behavior, and security checks.
@@ -117,9 +117,9 @@ Core responsibilities:
 - Enforce `maxTotalCost` and `maxAggregateCost`.
 - Enforce `msg.value` equals the current ETH price times quantity.
 - Enforce `maxTokensPerAddress`, with `0` meaning unlimited.
-- Call `adminMint` on the In Process ERC-1155 collection.
-- Distribute platform fee, staking fee, and artist revenue.
+- Call `adminMint` on the In Process ERC-1155 collection with `mintTo` as recipient.
 - Credit TortoiseShell once per eligible wallet/song.
+- Distribute platform fee, conditional staking fee, and artist revenue.
 - Support artist-approved splits and split locking.
 - Support pending claims when artist split transfer fails.
 - Support single collect and batch collect.
@@ -142,6 +142,7 @@ struct SaleConfig {
 struct CollectItem {
     address collection;
     uint256 tokenId;
+    address mintTo;
     uint256 quantity;
     uint256 maxTotalCost;
 }
@@ -149,6 +150,7 @@ struct CollectItem {
 function collect(
     address collection,
     uint256 tokenId,
+    address mintTo,
     uint256 quantity,
     uint256 maxTotalCost,
     string calldata comment
@@ -211,6 +213,8 @@ The minter should emit enough events for the Tortoise backend to build product v
 
 Recommended events:
 
+Use `collector` to mean the token recipient (`mintTo`) and `payer` to mean `msg.sender`.
+
 ```solidity
 event SaleSet(
     address indexed collection,
@@ -225,6 +229,7 @@ event SongCollected(
     address indexed collection,
     uint256 indexed tokenId,
     address indexed collector,
+    address payer,
     uint256 quantity,
     uint256 totalPaid
 );
@@ -249,14 +254,14 @@ event StakeCredited(
     address indexed collection,
     uint256 indexed tokenId,
     address indexed collector,
-    uint256 quantity
+    uint256 rewardUnits
 );
 
 event ShellCreditFailed(
     address indexed collection,
     uint256 indexed tokenId,
     address indexed collector,
-    uint256 quantity
+    uint256 rewardUnits
 );
 ```
 
@@ -304,23 +309,23 @@ Add:
 ## Collect Flow
 
 ```text
-Collector sends ETH to TortoiseInProcessMinter.
+Payer sends ETH to TortoiseInProcessMinter.
 
-Collector calls collect(collection, tokenId, quantity, maxTotalCost, comment).
+Payer calls collect(collection, tokenId, mintTo, quantity, maxTotalCost, comment).
 
 Minter:
   1. validates song registration
   2. validates sale exists and is active
   3. validates quantity and max cost
-  4. updates per-wallet mint count if enabled
+  4. updates per-wallet mint count for `mintTo` if enabled
   5. validates msg.value equals total ETH cost
-  6. calls collection.adminMint(collector, tokenId, quantity, "")
-  7. distributes platform fee, staking fee, and artist revenue
-  8. credits TortoiseShell if eligible
+  6. calls collection.adminMint(mintTo, tokenId, quantity, "")
+  7. credits TortoiseShell for `mintTo` if eligible, passing one reward unit for the first eligible wallet/song collect
+  8. distributes platform fee, conditional staking fee, and artist revenue
   9. emits collect, revenue, comment, and shell events
 ```
 
-Batch collect should require `msg.value` to equal the aggregate ETH cost, then process each item with the same per-item accounting. The result of one `batchCollect` should match repeated single `collect` calls, except the collector pays transaction overhead once.
+Batch collect should require `msg.value` to equal the aggregate ETH cost, then process each item with the same per-item accounting. The result of one `batchCollect` should match repeated single `collect` calls, except the payer pays transaction overhead once.
 
 ## TortoiseShell ETH Migration
 
@@ -343,11 +348,13 @@ function depositRewards() external payable;
 
 function creditStake(
     address user,
-    uint256 quantity
+    uint256 rewardUnits
 ) external returns (uint256 credited);
 ```
 
-The minter should call `creditStake` first. If the collector receives the expected TORT credit and the staking fee is nonzero, the minter should call `depositRewards{value: stakingFee}()`. If crediting fails or returns less than expected, the staking fee should remain artist revenue so collection is not blocked.
+The minter should call `creditStake(mintTo, 1)` only for the first eligible wallet/song collect, regardless of how many copies are minted in that transaction. Treat the second argument as reward units, not mint quantity. If `mintTo` receives the expected TORT credit and the staking fee is nonzero, the minter should call `depositRewards{value: stakingFee}()`. If crediting fails or returns less than expected, the staking fee should remain artist revenue so collection is not blocked.
+
+For delegated shell reward claims, `_claimRewards(user, payoutTo, amount)` must debit and send exactly `amount`, not the full unpaid balance. The public claim surface should still allow a reward owner to claim any amount up to `userUnpaidRewards[user]`. Delegated claims must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; `rewardClaimNonces[user]` increments on every successful delegated claim so old signatures cannot withdraw later rewards.
 
 ## Backend Indexing Plan
 
@@ -522,3 +529,5 @@ Useful confirmations only:
 4. Confirm whether the docs typo for the Base ERC-20 minter address should be corrected.
 
 These confirmations are helpful, but the implementation should not block on them.
+
+Exception: Base Sepolia deployment scripts must fail closed until the In Process-owned factory address is pinned. Fork tests can validate ABI behavior for a candidate, but they do not prove the candidate is the approved deployment.
