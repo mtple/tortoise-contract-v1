@@ -129,7 +129,10 @@ Core responsibilities:
 
 ```solidity
 error CommentTooLong();
-error InvalidArtistSaleSignature();
+error InvalidSaleSignature();
+error SaleSignatureExpired();
+error SaleNonceMismatch(uint256 expected, uint256 provided);
+error ZeroAddress();
 
 struct SaleConfig {
     uint64 saleStart;
@@ -143,6 +146,7 @@ struct CollectItem {
     address collection;
     uint256 tokenId;
     uint256 quantity;
+    address mintTo;
     uint256 maxTotalCost;
 }
 
@@ -151,6 +155,7 @@ function collect(
     uint256 tokenId,
     uint256 quantity,
     uint256 maxTotalCost,
+    address mintTo,
     string calldata comment
 ) external payable nonReentrant whenNotPaused;
 
@@ -225,6 +230,7 @@ event SongCollected(
     address indexed collection,
     uint256 indexed tokenId,
     address indexed collector,
+    address payer,
     uint256 quantity,
     uint256 totalPaid
 );
@@ -256,7 +262,9 @@ event ShellCreditFailed(
     address indexed collection,
     uint256 indexed tokenId,
     address indexed collector,
-    uint256 quantity
+    uint256 quantity,
+    uint256 expectedCredit,
+    uint256 actualCredit
 );
 
 event ShellDepositFailed(
@@ -512,7 +520,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 ### D.3 — `mintTo` recipient and per-wallet cap
 
-- `collect(address collection, uint256 tokenId, uint256 quantity, uint256 maxTotalCost, string calldata comment, address mintTo)` and the equivalent `CollectItem` entry in `batchCollect` both carry an explicit `mintTo`. `msg.sender` is unreliable on Base under smart-wallet relayers (Coinbase Smart Wallet, paymasters, Safes); attribution must be on the recipient, not the relayer.
+- `collect(address collection, uint256 tokenId, uint256 quantity, uint256 maxTotalCost, address mintTo, string calldata comment)` and the equivalent `CollectItem` entry in `batchCollect` both carry an explicit `mintTo`. `msg.sender` is unreliable on Base under smart-wallet relayers (Coinbase Smart Wallet, paymasters, Safes); attribution must be on the recipient, not the relayer.
 - `mintTo == address(0)` reverts `ZeroAddress`. Otherwise unrestricted (gift mints, sponsored relays, smart-wallet routes all work).
 - Per-wallet cap storage: `mapping(bytes32 songKey => mapping(address => uint64)) public mintedByAddress;` keyed on `mintTo`.
 - `tortRewardClaimed[songKey][mintTo]` — shell credit is attributed to the recipient.
@@ -527,8 +535,8 @@ These decisions are derived from review of the plan and resolve ambiguities that
 ### D.5 — Batch behavior
 
 - `batchCollect` is all-or-nothing. Any item revert tears down the whole tx.
-- Same-collection contiguous runs are minted in a single `adminMintBatch(mintTo, tokenIds, quantities, "")` call. The frontend is responsible for grouping items by collection; the contract does not sort.
-- Per-item distribution loop runs after each `adminMintBatch` call.
+- Each item mints with one `adminMint(mintTo, tokenId, quantity, "")` call. Do not assume the In Process/Zora creator exposes a public `adminMintBatch`; fork tests should fail if implementation accidentally reintroduces that dependency.
+- Per-item distribution runs immediately after that item's `adminMint` succeeds. Any later item revert still reverts the whole transaction because `batchCollect` is all-or-nothing.
 - `MAX_BATCH_ITEMS = 20`. Phase-2 gas test asserts a worst-case 20-item × 10-split-each batch fits under 20M gas on Base.
 
 ### D.6 — `MintComment` constraints
@@ -553,7 +561,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 | Already claimed | unchanged (true) | Artist revenue (no diversion) | none |
 | `creditStake` reverts | unchanged (false) | Artist revenue | `ShellCreditFailed` |
 | `creditStake` returns 0 | unchanged (false) | Artist revenue | `ShellCreditFailed` |
-| Returns `0 < n < expected` | unchanged (false) | Artist revenue | `ShellCreditFailed(actual=n)` |
+| Returns `0 < n < expected` | unchanged (false) | Artist revenue | `ShellCreditFailed(expectedCredit, actualCredit)` |
 | Returns full | set to true | Shell via `depositRewards{value:}` | `StakeCredited` |
 | Full credit but `depositRewards` reverts | set to true (user got TORT) | Artist revenue | `ShellDepositFailed` |
 
@@ -593,7 +601,7 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 
 ### Phase 1: Contract Skeleton
 
-- Add `ITortoiseInProcess1155` interface with `adminMint` and `adminMintBatch`.
+- Add `ITortoiseInProcess1155` interface with `adminMint` only.
 - Add `ICreator1155Factory` interface used by deployment scripts.
 - Rewrite `TortoiseShell` as ETH-native (no migration logic; existing prototype is replaced wholesale).
 - Add `TortoiseInProcessMinter`.
@@ -604,7 +612,7 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 
 ### Phase 2: Batch And Hardening
 
-- Add `batchCollect` with same-collection `adminMintBatch` grouping (`MAX_BATCH_ITEMS = 20`).
+- Add `batchCollect` that loops `adminMint` per item (`MAX_BATCH_ITEMS = 20`).
 - Add full test suite (unit + fuzz + invariant).
 - Add gas checks for realistic album collects (target: 20-item × 10-split-each batch fits under 20M gas).
 - Add fork checks for factory address, creator implementation, and `PERMISSION_BIT_MINTER == 4`.
@@ -650,7 +658,7 @@ version = "1"
 Typehash:
 
 ```
-SetSale(address collection,uint256 tokenId,address artist,bytes32 saleHash,uint256 nonce,uint256 deadline)
+SetSale(address collection,uint256 tokenId,bytes32 saleHash,uint256 nonce,uint256 deadline)
 ```
 
 `saleHash` covers only the four updatable fields of `SaleConfig`:
@@ -665,6 +673,7 @@ bytes32 saleHash = keccak256(abi.encode(
 ```
 
 The internal `exists` flag is contract-state, not part of the signed payload.
+The artist address is not included in the signed payload because the verifier always checks the signature against `songArtist[songKey]`. This avoids a redundant artist field drifting from the registered signer.
 
 Nonce policy:
 
@@ -679,7 +688,7 @@ Verification path:
 
 ```solidity
 bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
-    SET_SALE_TYPEHASH, collection, tokenId, artist, saleHash, nonce, deadline
+    SET_SALE_TYPEHASH, collection, tokenId, saleHash, nonce, deadline
 )));
 if (block.timestamp > deadline) revert SaleSignatureExpired();
 if (nonce != saleUpdateNonces[songKey]) revert SaleNonceMismatch(saleUpdateNonces[songKey], nonce);

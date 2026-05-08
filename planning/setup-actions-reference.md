@@ -11,18 +11,18 @@ The information here is a precondition for Phase 3 (Direct Creation Scripts) in 
 | Contract | Address | Source / Verification |
 | --- | --- | --- |
 | `Creator1155FactoryImpl` (proxy) | `0x540C18B7f99b3b599c6FeB99964498931c211858` | In Process docs and existing migration plan |
-| Creator1155 implementation | TBD — read from `Creator1155FactoryImpl.implementation()` on first fork test, then pinned here | Fork-resolve before audit |
+| Creator1155 implementation | TBD — read from `Creator1155FactoryImpl.zora1155Impl()` on first fork test, then pinned here | Fork-resolve before audit |
 | `PERMISSION_BIT_ADMIN` | `2` | Zora-derived constant |
 | `PERMISSION_BIT_MINTER` | `4` | Zora-derived constant |
 
 ### Base Sepolia
 
-The factory address differs from mainnet. Discover and pin during Phase-1 setup work:
+The factory address differs from mainnet. Pin from the In Process testnet docs before deploying test collections:
 
 | Contract | Address | Source / Verification |
 | --- | --- | --- |
-| `Creator1155FactoryImpl` | TBD | Pull from In Process testnet docs or deploy a known-good instance |
-| Creator1155 implementation | TBD | `factory.implementation()` |
+| `Creator1155FactoryImpl` | `0x6832A997D8616707C7b68721D6E9332E77da7F6C` | In Process testnet docs; fork-verify before testnet rollout |
+| Creator1155 implementation | TBD | `factory.zora1155Impl()` |
 | `PERMISSION_BIT_ADMIN` | `2` | Same constant |
 | `PERMISSION_BIT_MINTER` | `4` | Same constant |
 
@@ -43,29 +43,10 @@ interface ITortoiseInProcess1155 {
         uint256 quantity,
         bytes calldata data
     ) external;
-
-    function adminMintBatch(
-        address recipient,
-        uint256[] calldata tokenIds,
-        uint256[] calldata quantities,
-        bytes calldata data
-    ) external;
-
-    function addPermission(
-        uint256 tokenId,
-        address user,
-        uint256 permissionBits
-    ) external;
-
-    function isAdminOrRole(
-        address user,
-        uint256 tokenId,
-        uint256 role
-    ) external view returns (bool);
-
-    function nextTokenId() external view returns (uint256);
 }
 ```
+
+The production minter should only depend on `adminMint`. Deployment scripts may use the verified creator ABI for `setupNewToken`, `addPermission`, `assumeLastTokenIdMatches`, `updateRoyaltiesForToken`, and `isAdminOrRole`, but those script helpers must be fork-tested against the deployed creator implementation before mainnet use. Do not add unverified convenience methods such as `adminMintBatch` or `nextTokenId` to the production interface.
 
 ### `src/interfaces/ICreator1155Factory.sol`
 
@@ -88,7 +69,7 @@ interface ICreator1155Factory {
         bytes[] calldata setupActions
     ) external returns (address);
 
-    function implementation() external view returns (address);
+    function zora1155Impl() external view returns (address);
 }
 ```
 
@@ -106,7 +87,7 @@ bytes[] memory actions = new bytes[](2);
 actions[0] = abi.encodeWithSignature(
     "setupNewToken(string,uint256)",
     trackMetadataURI,    // Arweave URI (token metadata)
-    maxSupply            // 0 == unlimited
+    maxSupply            // use OPEN_EDITION_MAX_SUPPLY for unlimited; never pass 0
 );
 
 actions[1] = abi.encodeWithSignature(
@@ -119,15 +100,25 @@ actions[1] = abi.encodeWithSignature(
 
 `expectedTokenId` is computable by the backend before the call:
 
-- For the **first** token in a brand-new collection, `expectedTokenId == 1` (Zora-derived contracts use 1-indexed tokenIds).
-- For each subsequent token, read `creator.nextTokenId()` immediately before the call and use that value.
-- The backend reads the actual emitted token id from the `SetupNewToken` event after the tx confirms and persists it; the pre-call value is used only to inject `addPermission` into the same setup-actions array.
+- For a brand-new album collection, precompute token ids as `1..N` in setup-action order.
+- For an existing collection, compute `expectedTokenId = lastKnownTokenId + 1` from Tortoise's indexed state and prepend an `assumeLastTokenIdMatches(lastKnownTokenId)` action when using a multicall/setup-action bundle. This makes stale backend state revert instead of granting permission on the wrong token.
+- The backend reads the actual emitted token id from the `SetupNewToken` event after the tx confirms and persists it. Fork tests must prove the precomputed value matches the event before rollout.
+
+For unlimited/open editions, use the Zora/In Process open-edition sentinel validated in fork tests. Current recommendation is `OPEN_EDITION_MAX_SUPPLY = 18446744073709551615` (`type(uint64).max`), matching the In Process API default. Do not use `0` for unlimited; treat `0` as invalid in Tortoise input validation unless a fork test proves otherwise.
 
 ### Per-token royalty override
 
-When the artist requests a non-default royalty, replace `setupNewToken` with `setupNewTokenWithRoyalties`:
+When the artist requests a non-default royalty, keep `setupNewToken` and add a royalty update action after token creation:
 
 ```solidity
+bytes[] memory actions = new bytes[](3);
+
+actions[0] = abi.encodeWithSignature(
+    "setupNewToken(string,uint256)",
+    trackMetadataURI,
+    maxSupply
+);
+
 ICreator1155Factory.RoyaltyConfiguration memory tokenRoyalty =
     ICreator1155Factory.RoyaltyConfiguration({
         royaltyMintSchedule: 0,
@@ -135,13 +126,21 @@ ICreator1155Factory.RoyaltyConfiguration memory tokenRoyalty =
         royaltyRecipient: artistWallet
     });
 
-actions[0] = abi.encodeWithSignature(
-    "setupNewTokenWithRoyalties(string,uint256,(uint32,uint32,address))",
-    trackMetadataURI,
-    maxSupply,
+actions[1] = abi.encodeWithSignature(
+    "updateRoyaltiesForToken(uint256,(uint32,uint32,address))",
+    expectedTokenId,
     tokenRoyalty
 );
+
+actions[2] = abi.encodeWithSignature(
+    "addPermission(uint256,address,uint256)",
+    expectedTokenId,
+    address(tortoiseInProcessMinter),
+    4
+);
 ```
+
+Fork tests must verify this three-action sequence (`setupNewToken`, optional `updateRoyaltiesForToken`, `addPermission`) on both Base mainnet fork and Base Sepolia before scripts are used operationally.
 
 ### What is **not** set in setup actions
 
@@ -170,13 +169,13 @@ actions[0] = abi.encodeWithSignature(
 
 1. Backend confirms operator wallet holds `PERMISSION_BIT_ADMIN` on the existing collection (read `isAdminOrRole(operator, 0, 2)`).
 2. Backend uploads new track media and metadata.
-3. Backend reads `creator.nextTokenId()` for the `expectedTokenId`.
-4. Backend calls the collection directly with a multicall pattern (or two sequential calls) executing the same `setupNewToken` + `addPermission` actions from §C.3.
+3. Backend computes `expectedTokenId = lastKnownTokenId + 1` from Tortoise's indexed state.
+4. Backend calls the collection directly with a multicall/setup-action pattern that first checks `assumeLastTokenIdMatches(lastKnownTokenId)`, then executes `setupNewToken`, optional `updateRoyaltiesForToken`, and `addPermission`.
 5. Backend issues `setSale` and `registerSongWithSplits` on the minter as in §C.5.
 
 ## C.7 — "No ETH leaves" invariant during creation
 
-The factory and creator implementation should not consume ETH for `createContract`, `setupNewToken`, `setupNewTokenWithRoyalties`, or `addPermission`. Phase-2 fork test asserts:
+The factory and creator implementation should not consume ETH for `createContract`, `setupNewToken`, `updateRoyaltiesForToken`, or `addPermission`. Phase-2 fork test asserts:
 
 ```solidity
 uint256 balanceBefore = address(this).balance;
@@ -191,11 +190,11 @@ If a future In Process implementation introduces a creation fee, this test fails
 Phase-2 fork tests assert each of the following before mainnet rollout:
 
 1. `Creator1155FactoryImpl` at the pinned address has nonzero code and is the expected implementation.
-2. `factory.implementation()` returns a creator implementation whose source matches the verified Basescan source.
+2. `factory.zora1155Impl()` returns a creator implementation whose source matches the verified Basescan source.
 3. `PERMISSION_BIT_MINTER == 4` and `PERMISSION_BIT_ADMIN == 2`.
 4. A fork-deployed test collection produced via `createContract` with the §C.3 `setupActions` template results in `TortoiseInProcessMinter` holding `PERMISSION_BIT_MINTER` on the new tokenId.
 5. `adminMint(mintTo, tokenId, quantity, "")` from `TortoiseInProcessMinter` succeeds.
-6. `adminMintBatch(mintTo, tokenIds, quantities, "")` from `TortoiseInProcessMinter` succeeds and produces the expected balances.
+6. Multi-item Tortoise `batchCollect` succeeds by looping `adminMint` once per item and produces the expected balances.
 7. `assertEq(address(deployer).balance, balanceBefore)` across the entire creation flow.
 
 ## C.9 — Required mocks for unit tests
@@ -206,11 +205,10 @@ Phase-2 fork tests assert each of the following before mainnet rollout:
 - `mapping(uint256 tokenId => mapping(address => mapping(uint256 => bool))) permission`.
 - `adminMint` reverts on `totalMinted + quantity > maxSupply` when set.
 - `adminMint` reverts unless caller has `PERMISSION_BIT_MINTER` for the tokenId.
-- `adminMintBatch` enforces same checks per tokenId.
 - ERC-1155 `_balances` map for `balanceOf` reads.
-- Test-only setters: `setMaxSupply`, `grantPermission`, `nextTokenId` getter.
+- Test-only setters: `setMaxSupply`, `grantPermission`.
 
-`test/mocks/MockBadInProcess1155.sol` — same surface but `adminMint` and `adminMintBatch` revert unconditionally. Used to verify that `TortoiseInProcessMinter` does not mutate state when the underlying token reverts (whole-batch revert in `batchCollect`).
+`test/mocks/MockBadInProcess1155.sol` — same surface but `adminMint` reverts unconditionally. Used to verify that `TortoiseInProcessMinter` does not mutate state when the underlying token reverts (whole-batch revert in `batchCollect`).
 
 `test/mocks/MockTortoiseShellETH.sol` — implements:
 
