@@ -20,20 +20,20 @@ The custom minter is the preferred architecture because it owns the full collect
 
 The router architecture should be treated as superseded. Its useful pieces are the fee logic, splits logic, shell-credit behavior, batch collect behavior, and security checks.
 
-## Why Move Away From The Router
+## Why We're Not Building The Router Architecture
 
-The router was designed to wrap the standard In Process ERC-20 minter. That made sense only if Tortoise needed to stay compatible with the In Process hosted API/app/indexer/collect flow.
+The prototype `TortoiseMintRouter` in this repo was an early design that wrapped the standard In Process ERC-20 minter. That shape made sense only if Tortoise needed to stay compatible with the In Process hosted API/app/indexer/collect flow. Nothing in this repo has been deployed; the router is a design artifact, not a production system.
 
-For a Tortoise-owned direct-contract flow, the router adds an unnecessary dependency:
+For a Tortoise-owned direct-contract flow, the router shape is a dead end:
 
-- The standard In Process ERC-20 minter remains the real minter.
-- The router must be configured as sale `fundsRecipient`.
-- Direct collects through the standard minter can send USDC to the router without executing Tortoise distribution logic.
-- Pricing and sale state live in a third-party minter instead of the Tortoise economic contract.
-- The router must approve another external minter during the hot collect path.
-- The existing router design is USDC-first, but the target product direction is ETH-first.
+- The standard In Process ERC-20 minter would remain the real minter.
+- The router would have to be configured as sale `fundsRecipient`, with all the misconfiguration risk that implies.
+- Direct collects through the standard minter could send USDC to the router without executing Tortoise distribution logic.
+- Pricing and sale state would live in a third-party minter instead of the Tortoise economic contract.
+- The router would have to approve another external minter during the hot collect path.
+- The router design is USDC-first, but the target product direction is ETH-first.
 
-The custom minter removes that middle layer. Tortoise becomes the sale contract and minting path.
+The custom minter removes the middle layer. Tortoise becomes the sale contract and minting path. The prototype router will be deleted once the new minter and ETH-native shell pass tests; it is referenced in this document only as a source of patterns to adapt.
 
 ## Contract Facts This Plan Relies On
 
@@ -258,13 +258,37 @@ event ShellCreditFailed(
     address indexed collector,
     uint256 quantity
 );
+
+event ShellDepositFailed(
+    address indexed collection,
+    uint256 indexed tokenId,
+    uint256 amount
+);
+
+event SplitsConfigured(address indexed collection, uint256 indexed tokenId);
+
+event SplitsLocked(address indexed collection, uint256 indexed tokenId);
+
+event SplitPaymentDeferred(
+    address indexed collection,
+    uint256 indexed tokenId,
+    address indexed recipient,
+    uint256 amount
+);
+
+event PaymentDistributed(
+    address indexed collection,
+    uint256 indexed tokenId,
+    address indexed recipient,
+    uint256 amount
+);
 ```
 
 Keep ERC-1155 `TransferSingle` and `TransferBatch` indexing separate from Tortoise minter event indexing. The ERC-1155 collection remains the source of ownership truth.
 
-## Router Logic To Reuse
+## Router Patterns To Adapt
 
-Carry forward from `TortoiseMintRouter`:
+Use the prototype `TortoiseMintRouter` as a design reference for the new minter. The router itself will be deleted; these patterns are ported (not literally copied) into `TortoiseInProcessMinter`:
 
 - Platform fee and staking fee math.
 - Fee caps.
@@ -467,25 +491,124 @@ Remove reliance on:
 - Grant custom minter permission.
 - Confirm custom minter can call `adminMint`.
 
+## Implementation Decisions
+
+These decisions are derived from review of the plan and resolve ambiguities that would otherwise surface during implementation. They are binding for the v1 minter and ETH-native shell.
+
+### D.1 — Sale-update authority and signatures
+
+- `setSale(address collection, uint256 tokenId, SaleConfig config)` is `onlyOwner`. Used for emergency / initial / operator-as-owner flows. Bumps `saleUpdateNonces[songKey]`.
+- `setSaleWithArtistSignature(...)` is callable by anyone (operator relay). Signature must verify against `songArtist[songKey]` at consume time. Deadline enforced. Bumps `saleUpdateNonces[songKey]`.
+- Owner can override an in-flight artist signature at any time; the nonce bump invalidates the artist's pending submission.
+- See "EIP-712 Schemas" below for the typed-data definition.
+
+### D.2 — ETH transfer semantics on the distribution path
+
+- All distribution-path sends use a `_safeSendETH(to, amount)` helper that forwards a fixed gas stipend (30,000) and returns a boolean. Failure does not revert the collect.
+- On failure, the amount is recorded in `pendingClaims[songKey][recipient]` and `SplitPaymentDeferred` is emitted. Applies to platform fee, every artist split, and the artist-default recipient.
+- The shell's `depositRewards{value: stakingFee}` call is wrapped in `try/catch`. On revert, the staking fee is folded back into artist revenue and re-distributed via the same split path. Emits `ShellDepositFailed`. (No double-payment risk — the shell call happens before split distribution, so artist revenue is recomputed.)
+- Strict checks-effects-interactions inside `_distribute`: per-wallet cap write → `adminMint` → `creditStake` → `depositRewards` → platform send → split sends. Each external call is preceded by a state write.
+- `nonReentrant` (transient guard) on `collect`, `batchCollect`, `claimPending`.
+
+### D.3 — `mintTo` recipient and per-wallet cap
+
+- `collect(address collection, uint256 tokenId, uint256 quantity, uint256 maxTotalCost, string calldata comment, address mintTo)` and the equivalent `CollectItem` entry in `batchCollect` both carry an explicit `mintTo`. `msg.sender` is unreliable on Base under smart-wallet relayers (Coinbase Smart Wallet, paymasters, Safes); attribution must be on the recipient, not the relayer.
+- `mintTo == address(0)` reverts `ZeroAddress`. Otherwise unrestricted (gift mints, sponsored relays, smart-wallet routes all work).
+- Per-wallet cap storage: `mapping(bytes32 songKey => mapping(address => uint64)) public mintedByAddress;` keyed on `mintTo`.
+- `tortRewardClaimed[songKey][mintTo]` — shell credit is attributed to the recipient.
+- `MintComment` event's collector field is `mintTo`.
+- `SongCollected` includes both `mintTo` (collector) and `payer` (`msg.sender`) so the indexer can distinguish self vs. relayed collects.
+
+### D.4 — Refund policy
+
+- Strict equality: `msg.value == totalCost` for `collect`, `msg.value == aggregateCost` for `batchCollect`. Mismatch reverts `IncorrectEthValue(uint256 expected, uint256 actual)`.
+- No refund logic. Frontend re-quotes against `sale(collection, tokenId)` immediately before submission. `maxTotalCost` / `maxAggregateCost` absorb mid-block sale changes.
+
+### D.5 — Batch behavior
+
+- `batchCollect` is all-or-nothing. Any item revert tears down the whole tx.
+- Same-collection contiguous runs are minted in a single `adminMintBatch(mintTo, tokenIds, quantities, "")` call. The frontend is responsible for grouping items by collection; the contract does not sort.
+- Per-item distribution loop runs after each `adminMintBatch` call.
+- `MAX_BATCH_ITEMS = 20`. Phase-2 gas test asserts a worst-case 20-item × 10-split-each batch fits under 20M gas on Base.
+
+### D.6 — `MintComment` constraints
+
+- Contract enforces `bytes(comment).length <= 500` and reverts `CommentTooLong` otherwise.
+- Empty comment → no `MintComment` emit.
+- Non-empty comment → emit `MintComment(mintTo, collection, tokenId, quantity, comment)`. Never stored in contract state.
+- Frontend hard-truncates to 500 UTF-8 bytes with a visible counter.
+
+### D.7 — Pending-claim ETH accounting
+
+- Storage: `uint256 public totalPendingClaims;` Increment in `_recordPendingClaim`, decrement in `claimPending`.
+- Invariant (Phase-2 invariant test): `address(this).balance >= totalPendingClaims` at every external-call boundary.
+- No `recoverETH` function on the minter. ERC-20 `recoverTokens(token, amount)` remains for stray tokens.
+
+### D.8 — Shell-credit divergence
+
+`_creditShell` returns `(bool fullCredit, uint256 actualCredit)`. The minter never reverts on shell-related failures. Collect always succeeds when `adminMint` succeeds.
+
+| Condition | `tortRewardClaimed` | Staking fee routed to | Event |
+| --- | --- | --- | --- |
+| Already claimed | unchanged (true) | Artist revenue (no diversion) | none |
+| `creditStake` reverts | unchanged (false) | Artist revenue | `ShellCreditFailed` |
+| `creditStake` returns 0 | unchanged (false) | Artist revenue | `ShellCreditFailed` |
+| Returns `0 < n < expected` | unchanged (false) | Artist revenue | `ShellCreditFailed(actual=n)` |
+| Returns full | set to true | Shell via `depositRewards{value:}` | `StakeCredited` |
+| Full credit but `depositRewards` reverts | set to true (user got TORT) | Artist revenue | `ShellDepositFailed` |
+
+### D.9 — Royalty defaults
+
+- EIP-2981 default at token setup: `royaltyBPS = 500` (5%), `royaltyRecipient = artist primary wallet`, `royaltyMintSchedule = 0`.
+- Per-token override allowed via the setup-action helper (see `planning/setup-actions-reference.md`).
+- Future per-token royalty updates are admin-gated on the collection — out of scope for the v1 minter; handled by ops scripts.
+
+### D.10 — Album scope per collection
+
+- One ERC-1155 collection per album. New tracks added to existing collections via the "Add Track" flow — backend operator wallet must hold per-collection admin permission. See `planning/setup-actions-reference.md` §C.4.
+
+### D.11 — `TortoiseShell` ETH-native rewrite
+
+The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replaced wholesale. No migration logic; the prototype is a design reference only.
+
+- Drop `IERC20 rewardToken`, `REWARD_SCALAR`, all scaled math.
+- Storage shape stays the same (`rewardRate`, `rewardDuration`, `periodFinish`, `lastUpdateTime`, `rewardPerTokenStored`, `reservedBalance`, `_queuedReward`, `_queuedRewardUpdatedAt`, `userRewardPerTokenPaid`, `userUnpaidRewards`, `tortPool`, `tortRewardPerCollection`, `totalTortCredited`, `authorizedCallers`) but all amounts are wei.
+- `MIN_REWARD_DEPOSIT = 1e15` wei (0.001 ETH). Document threat model in the contract: prevents cap-and-extend `rewardRate` dilution via dust deposits.
+- `depositRewards()` is `external payable onlyAuthorizedCaller updateReward(address(0))`. No `amount` arg. Reconciles via `actual = address(this).balance - totalRewardsDeposited`. (TORT is ERC-20, separate balance, doesn't offset.)
+- `_addReward(reward)` accepts wei directly (no `*= REWARD_SCALAR`).
+- `_claimRewards(user)` pays out `userUnpaidRewards[user]` in wei and uses `_safeSendETH` with revert-on-failure (claim is user-initiated; failing loud is correct so the user can retry from a working wallet).
+- `receive() external payable` reverts unless `authorizedCallers[msg.sender]`. Plain sends rejected; `selfdestruct` ETH still lands and is automatically swept on the next `depositRewards` reconciliation (documented behavior).
+- No `recoverETH`. `recoverTokens(token, amount)` exists for stray ERC-20s with `token != address(stakingToken)`.
+- All `require("...")` strings replaced with custom errors (`CallerMustBeContract`, `RenouncingOwnershipDisabled`, `CannotRecoverStakingToken`).
+- `creditStake(user, quantity)` returns reduced credit when `tortPool` is short; the minter consumes that semantics per D.8.
+
+### D.12 — Cleanup
+
+- `SplitsConfigured`, `SplitsLocked`, `ShellDepositFailed`, `SplitPaymentDeferred`, `PaymentDistributed` are all listed in the Recommended Events section above.
+- Per-wallet cap is in Phase 1 (storage cost is trivial; deferring it adds churn).
+- The prototype `UnexpectedProceeds` invariant is not carried forward. New invariant is `msg.value == totalCost`, enforced before `adminMint`.
+- `_validateFeeMinimum(totalCost, platformFeeBps)` and `_validateFeeMinimum(pricePerToken, stakingFeeBps)` are kept. With 18-decimal ETH at sane prices the rounding-to-zero check is effectively unreachable, but it is cheap and defends against future zero-priced configurations.
+
 ## Implementation Phases
 
 ### Phase 1: Contract Skeleton
 
-- Add `ITortoiseInProcess1155` interface with `adminMint`.
+- Add `ITortoiseInProcess1155` interface with `adminMint` and `adminMintBatch`.
+- Add `ICreator1155Factory` interface used by deployment scripts.
+- Rewrite `TortoiseShell` as ETH-native (no migration logic; existing prototype is replaced wholesale).
 - Add `TortoiseInProcessMinter`.
-- Port fee, splits, EIP-712, pending-claim, and shell-credit logic from router.
+- Port fee, splits, EIP-712, pending-claim, and shell-credit patterns from the prototype router.
 - Add sale config storage and events.
-- Convert collect flow to native ETH.
-- Update Shell for native ETH rewards.
-- Add single collect.
+- Implement collect flow with native ETH, strict-equality `msg.value`, `mintTo` recipient argument, and per-wallet cap.
+- Implement single `collect`.
 
 ### Phase 2: Batch And Hardening
 
-- Add `batchCollect`.
-- Add max per wallet.
-- Add full test suite.
-- Add gas checks for realistic album collects.
-- Add fork checks for factory and permission constants.
+- Add `batchCollect` with same-collection `adminMintBatch` grouping (`MAX_BATCH_ITEMS = 20`).
+- Add full test suite (unit + fuzz + invariant).
+- Add gas checks for realistic album collects (target: 20-item × 10-split-each batch fits under 20M gas).
+- Add fork checks for factory address, creator implementation, and `PERMISSION_BIT_MINTER == 4`.
+- Delete prototype router/shell/USDC-minter mocks once new contracts are green.
 
 ### Phase 3: Direct Creation Scripts
 
@@ -510,15 +633,99 @@ Remove reliance on:
 - Add album collect quote from backend/minter sale configs.
 - Add owner/collector/comment views from Tortoise indexer.
 
+## EIP-712 Schemas
+
+The new minter signs and verifies typed data under a fresh EIP-712 domain. There are no legacy signatures to honor — the prototype router is undeployed and its domain is not preserved.
+
+Domain:
+
+```
+EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)
+name    = "TortoiseInProcessMinter"
+version = "1"
+```
+
+### S.1 — `SetSale` (artist-signed sale updates)
+
+Typehash:
+
+```
+SetSale(address collection,uint256 tokenId,address artist,bytes32 saleHash,uint256 nonce,uint256 deadline)
+```
+
+`saleHash` covers only the four updatable fields of `SaleConfig`:
+
+```solidity
+bytes32 saleHash = keccak256(abi.encode(
+    config.saleStart,
+    config.saleEnd,
+    config.maxTokensPerAddress,
+    config.pricePerToken
+));
+```
+
+The internal `exists` flag is contract-state, not part of the signed payload.
+
+Nonce policy:
+
+```solidity
+mapping(bytes32 songKey => uint256) public saleUpdateNonces;
+```
+
+- Per-`(collection, tokenId)`, not per-artist. An artist who owns multiple tokens has independent counters per token.
+- Read at consume time and incremented on consume in **both** `setSale` (owner) and `setSaleWithArtistSignature` (relayed). This way an owner override invalidates an in-flight artist signature.
+
+Verification path:
+
+```solidity
+bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
+    SET_SALE_TYPEHASH, collection, tokenId, artist, saleHash, nonce, deadline
+)));
+if (block.timestamp > deadline) revert SaleSignatureExpired();
+if (nonce != saleUpdateNonces[songKey]) revert SaleNonceMismatch(saleUpdateNonces[songKey], nonce);
+if (!SignatureChecker.isValidSignatureNowCalldata(songArtist[songKey], digest, sig)) {
+    revert InvalidSaleSignature();
+}
+saleUpdateNonces[songKey] = nonce + 1;
+```
+
+Errors required: `InvalidSaleSignature`, `SaleSignatureExpired`, `SaleNonceMismatch(uint256 expected, uint256 provided)`.
+
+### S.2 — `RegisterSongWithSplits` (initial registration)
+
+Carry forward from the prototype router with the new domain. Typehash:
+
+```
+RegisterSongWithSplits(address collection,uint256 tokenId,address artist,bytes32 splitsHash,bool lockSplits,uint256 nonce,uint256 deadline)
+```
+
+`splitsHash = keccak256(abi.encode(splits))` where `splits` is the `SplitRecipient[]` calldata.
+
+Nonce: `mapping(address artist => uint256) public splitAuthorizationNonces;` (per-artist, same shape as the prototype).
+
+Reuse the hashing pattern from the prototype router (`_hashRegisterSongWithSplits`, `_hashSplits`). Only the EIP-712 domain differs because the contract is new; the typehash string is unchanged.
+
+### S.3 — Test vectors
+
+Before audit, ship `test/fixtures/eip712-vectors.json` containing:
+
+- 3 valid `SetSale` signatures across different `(collection, tokenId, nonce, deadline)` tuples.
+- 1 expired `SetSale` signature.
+- 1 wrong-nonce `SetSale` signature.
+- 1 `SetSale` signature signed by a non-artist EOA.
+- 3 valid `RegisterSongWithSplits` signatures.
+- 1 `RegisterSongWithSplits` signature with mutated `splitsHash`.
+
+Vectors are generated off-chain (viem or `cast wallet sign-typed-data`) and asserted onchain in a Foundry test that calls public hashing helpers and `SignatureChecker`. This catches drift between off-chain signing infrastructure and onchain verification before mainnet deployment.
+
 ## In Process Team Dependency
 
 No In Process team work is required for the core implementation if Tortoise uses direct contracts and owns display/indexing.
 
 Useful confirmations only:
 
-1. Confirm current factory and creator implementation addresses.
+1. Confirm current factory and creator implementation addresses on Base mainnet and Base Sepolia.
 2. Confirm `PERMISSION_BIT_MINTER = 4`.
 3. Confirm direct `adminMint` from a permissioned custom minter is an acceptable contract path.
-4. Confirm whether the docs typo for the Base ERC-20 minter address should be corrected.
 
-These confirmations are helpful, but the implementation should not block on them.
+These confirmations are helpful, but the implementation should not block on them — fork tests will assert each one independently.
