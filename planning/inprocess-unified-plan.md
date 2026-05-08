@@ -1,6 +1,12 @@
 # Tortoise v1 Unified Development Plan: In Process Integration
 
-This document is the planning source for the revised Tortoise v1 system. It replaces the earlier architecture where Tortoise owned the ERC-1155 minting contract. The new architecture delegates NFT infrastructure to In Process while Tortoise owns the economic layer.
+Superseded router-era plan. This document is retained for historical context and
+for payment/split/shell patterns that may be ported into the custom minter, but
+it is not the active deployment plan. Use `planning/minter-architecture-migration-plan.md`
+and `planning/setup-actions-reference.md` for current architecture and contract
+address decisions.
+
+This document was the planning source for a revised Tortoise v1 system. It replaced the earlier architecture where Tortoise owned the ERC-1155 minting contract. That router architecture has since been superseded by the custom minter plan.
 
 In Process should be treated as a Zora-compatible fork or derivative, not canonical Zora itself. The implementation should use the verified In Process mainnet contract ABI and behavior, not assume canonical Zora ERC20Minter reward or referral mechanics.
 
@@ -881,7 +887,10 @@ The archived files are for historical reference and migration reasoning only. Ne
 - **Initial TORT pool size:** model launch volume against available TORT budget.
 - **No-fee fork proof:** mainnet fork should prove a full collect leaves the router with exactly `pricePerToken * quantity`; live minter config already reports zero reward pct and zero ETH reward.
 
-## Reference Addresses
+## Historical Router-Era Reference Addresses
+
+These are mainnet-only references from the superseded router plan. They are not a
+Base Sepolia address book and should not be used as the current deployment source.
 
 | Token or Contract | Network | Address |
 |-------------------|---------|---------|
