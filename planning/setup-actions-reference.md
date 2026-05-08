@@ -1,6 +1,6 @@
 # Setup Actions Reference
 
-This document pins the In Process / Zora-derived ERC-1155 factory contract addresses, interface stubs, and `setupActions` calldata templates that `TortoiseInProcessMinter` and the deployment scripts depend on. It is the single source of truth for "how Tortoise creates collections and tokens, and how the new minter is granted permission to mint them."
+This document tracks the confirmed In Process / Zora-derived ERC-1155 factory contracts, explicitly marked testnet candidates, interface stubs, and `setupActions` calldata templates that `TortoiseInProcessMinter` and the deployment scripts depend on. It is the single source of truth for "how Tortoise creates collections and tokens, and how the new minter is granted permission to mint them."
 
 The information here is a precondition for Phase 3 (Direct Creation Scripts) in `minter-architecture-migration-plan.md`. Phase 2 fork tests assert each pinned value before mainnet rollout.
 
@@ -10,14 +10,14 @@ The information here is a precondition for Phase 3 (Direct Creation Scripts) in 
 
 | Contract | Address | Source / Verification |
 | --- | --- | --- |
-| `Creator1155FactoryImpl` (proxy) | `0x540C18B7f99b3b599c6FeB99964498931c211858` | In Process docs and existing migration plan |
-| Creator1155 implementation | TBD — read from `Creator1155FactoryImpl.zora1155Impl()` on first fork test, then pinned here | Fork-resolve before audit |
+| `Creator1155FactoryImpl` (proxy) | `0x540C18B7f99b3b599c6FeB99964498931c211858` | In Process docs and existing migration plan; Base RPC returns `contractName() == "ZORA 1155 Contract Factory"` and `contractVersion() == "2.13.2"` |
+| Creator1155 implementation | `0x06fb7d2650c308320f6791d0543767735305fec7` | Returned by `Creator1155FactoryImpl.zora1155Impl()` on Base mainnet RPC; fork-verify source before audit |
 | `PERMISSION_BIT_ADMIN` | `2` | Zora-derived constant |
 | `PERMISSION_BIT_MINTER` | `4` | Zora-derived constant |
 
 ### Base Sepolia
 
-The factory address differs from mainnet and must be treated as environment-specific. The verified source name may still be `ZoraCreator1155FactoryImpl` because In Process uses a Zora-derived creator stack; that does not make every Zora deployment an In Process deployment.
+The factory address differs from mainnet and must be treated as environment-specific. The verified source name may still be `ZoraCreator1155FactoryImpl` because In Process uses a Zora-derived creator stack; that does not make every Zora deployment an In Process deployment. Do not use a Base Sepolia factory operationally until it is confirmed by In Process docs/team or an equivalent source of truth.
 
 | Contract | Address | Source / Verification |
 | --- | --- | --- |

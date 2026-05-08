@@ -45,12 +45,17 @@ The custom minter removes the middle layer. Tortoise becomes the sale contract a
 - The factory accepts setup actions when creating a collection.
 - Direct contract integration does not require the In Process API.
 
-Confirmed Base addresses:
+Confirmed Base mainnet addresses:
 
-| Contract | Base Address |
-| --- | --- |
-| Creator1155FactoryImpl | `0x540C18B7f99b3b599c6FeB99964498931c211858` |
-| In Process ERC-20 minter, reference only | `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` |
+| Contract | Address | Notes |
+| --- | --- | --- |
+| In Process `Creator1155FactoryImpl` | `0x540C18B7f99b3b599c6FeB99964498931c211858` | Mainnet factory used for direct collection creation; RPC reports `ZORA 1155 Contract Factory` v2.13.2 |
+| In Process Creator1155 implementation | `0x06fb7d2650c308320f6791d0543767735305fec7` | Returned by `zora1155Impl()` on the confirmed mainnet factory |
+| In Process ERC-20 minter, reference only | `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` | Router-era reference only; not used by `TortoiseInProcessMinter` |
+
+Base Sepolia is intentionally unpinned until In Process confirms the correct testnet
+factory. `planning/setup-actions-reference.md` lists observed Zora-compatible
+candidates, but those are not operational In Process addresses until confirmed.
 
 ## Target Architecture
 
@@ -448,14 +453,15 @@ Remove reliance on:
 
 ### Base Sepolia
 
-1. Deploy or reuse `TortoiseShell`.
-2. Deploy `TortoiseInProcessMinter`.
-3. Register the minter as an authorized caller on `TortoiseShell`.
-4. Create a test collection through the In Process factory.
-5. Create a test token with minter permission setup action.
-6. Configure sale and splits in the Tortoise minter.
-7. Collect with Base Sepolia ETH.
-8. Verify ERC-1155 ownership, ETH distribution, shell credit, and indexer records.
+1. Confirm and pin the Base Sepolia In Process `Creator1155FactoryImpl` in `planning/setup-actions-reference.md`. Do not use the candidate or canonical Zora factories unless In Process explicitly confirms that address, or Tortoise intentionally chooses a non-In-Process testnet stack.
+2. Deploy or reuse `TortoiseShell`.
+3. Deploy `TortoiseInProcessMinter`.
+4. Register the minter as an authorized caller on `TortoiseShell`.
+5. Create a test collection through the confirmed In Process factory.
+6. Create a test token with minter permission setup action.
+7. Configure sale and splits in the Tortoise minter.
+8. Collect with Base Sepolia ETH.
+9. Verify ERC-1155 ownership, ETH distribution, shell credit, and indexer records.
 
 ### Base Mainnet
 
@@ -642,6 +648,10 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 - Add token creation/setup script for existing collections.
 - Add sale registration script.
 - Add deployment validation script.
+- Require an explicit per-network factory allowlist. For Base Sepolia, scripts must
+  fail closed until the In Process factory is confirmed and pinned in
+  `planning/setup-actions-reference.md`; do not silently fall back to canonical Zora
+  deployments.
 
 ### Phase 4: Backend And Indexer
 
@@ -778,7 +788,7 @@ No In Process team work is required for the core implementation if Tortoise uses
 
 Useful confirmations only:
 
-1. Confirm current factory and creator implementation addresses on Base mainnet and Base Sepolia.
+1. Confirm current factory and creator implementation addresses on Base mainnet and Base Sepolia. Mainnet is currently pinned from existing In Process docs/local plan plus RPC reads; Base Sepolia remains unconfirmed.
 2. Confirm `PERMISSION_BIT_MINTER = 4`.
 3. Confirm direct `adminMint` from a permissioned custom minter is an acceptable contract path.
 

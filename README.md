@@ -171,10 +171,18 @@ minter. Collects revert unless `msg.value` exactly matches the current onchain q
 | Contract | Network | Address | Notes |
 |----------|---------|---------|-------|
 | TORT | Base mainnet | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` | Staking token |
-| In Process Creator1155FactoryImpl | Base mainnet | `0x540C18B7f99b3b599c6FeB99964498931c211858` | Direct collection creation |
-| In Process Creator1155FactoryImpl | Base Sepolia | `0x6832A997D8616707C7b68721D6E9332E77da7F6C` | Testnet collection creation |
+| In Process Creator1155FactoryImpl | Base mainnet | `0x540C18B7f99b3b599c6FeB99964498931c211858` | Confirmed mainnet factory; RPC reports `ZORA 1155 Contract Factory` v2.13.2 |
+| In Process Creator1155 implementation | Base mainnet | `0x06fb7d2650c308320f6791d0543767735305fec7` | Returned by `zora1155Impl()` on the confirmed mainnet factory |
+| In Process Creator1155FactoryImpl | Base Sepolia | TBD | Must be confirmed from In Process docs/team before Tortoise testnet collection creation |
+| Candidate Zora-compatible factory | Base Sepolia | `0x6832A997D8616707C7b68721D6E9332E77da7F6C` | RPC reports `ZORA 1155 Contract Factory` v2.13.2; not confirmed as In Process-owned/approved |
+| Canonical Zora factory | Base Sepolia | `0x3b82f0910B67Af840bD90bF6E45537c5B72c893e` | RPC reports `ZORA 1155 Contract Factory` v2.13.1; reference only unless Tortoise intentionally chooses canonical Zora |
 | In Process ERC-20 minter | Base mainnet | `0xE27d9Dc88dAB82ACa3ebC49895c663C6a0CfA014` | Reference only; not used by the custom minter path |
 | USDC | Base mainnet | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | Router-era only |
+
+In Process uses a Zora-derived creator stack, so verified source names and
+`contractName()` values may say "ZORA." That proves ABI compatibility, not that an
+address is the In Process deployment. Use `planning/setup-actions-reference.md`
+as the operational address source.
 
 ## License
 
