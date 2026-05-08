@@ -398,6 +398,8 @@ Tortoise should run a small indexer or event listener for:
 
 The database should treat backend-created records as the primary catalog and contract events as the settlement truth.
 
+Add-track safety depends on `lastKnownTokenId` being current. Indexer health monitoring is therefore a precondition for the artist add-track path, and the backend should fail closed when collection token indexing is behind. When possible, run `assumeLastTokenIdMatches(lastKnownTokenId)` as a read-only preflight before submitting the write transaction so stale state fails before gas is spent.
+
 Minimum indexed product views:
 
 - Album page with tracks.

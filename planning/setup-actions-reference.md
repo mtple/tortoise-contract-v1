@@ -140,7 +140,7 @@ actions[2] = abi.encodeWithSignature(
 );
 ```
 
-Fork tests must verify this three-action sequence (`setupNewToken`, optional `updateRoyaltiesForToken`, `addPermission`) on both Base mainnet fork and Base Sepolia before scripts are used operationally.
+Fork tests must verify this three-action sequence (`setupNewToken`, optional `updateRoyaltiesForToken`, `addPermission`) on both Base mainnet fork and Base Sepolia before scripts are used operationally. The operator must hold collection admin permission before using `updateRoyaltiesForToken`; current expectation is that `PERMISSION_BIT_ADMIN` (`2`) is sufficient, but fork tests must prove this so an under-permissioned operator cannot fail mid-bundle in production.
 
 ### What is **not** set in setup actions
 
@@ -167,7 +167,7 @@ Fork tests must verify this three-action sequence (`setupNewToken`, optional `up
 
 ## C.6 — Add-track flow (existing album)
 
-1. Backend confirms operator wallet holds `PERMISSION_BIT_ADMIN` on the existing collection (read `isAdminOrRole(operator, 0, 2)`).
+1. Backend confirms operator wallet holds `PERMISSION_BIT_ADMIN` on the existing collection (read `isAdminOrRole(operator, 0, 2)`). On Zora 1155, `tokenId == 0` selects collection-scope permissions.
 2. Backend uploads new track media and metadata.
 3. Backend computes `expectedTokenId = lastKnownTokenId + 1` from Tortoise's indexed state.
 4. Backend calls the collection directly with a multicall/setup-action pattern that first checks `assumeLastTokenIdMatches(lastKnownTokenId)`, then executes `setupNewToken`, optional `updateRoyaltiesForToken`, and `addPermission`.
@@ -196,6 +196,7 @@ Phase-2 fork tests assert each of the following before mainnet rollout:
 5. `adminMint(mintTo, tokenId, quantity, "")` from `TortoiseInProcessMinter` succeeds.
 6. Multi-item Tortoise `batchCollect` succeeds by looping `adminMint` once per item and produces the expected balances.
 7. `assertEq(address(deployer).balance, balanceBefore)` across the entire creation flow.
+8. `assumeLastTokenIdMatches(lastKnownTokenId)` reverts when `lastKnownTokenId` is stale and succeeds when it is fresh.
 
 ## C.9 — Required mocks for unit tests
 
