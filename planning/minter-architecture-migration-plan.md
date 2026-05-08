@@ -161,6 +161,7 @@ struct CollectItem {
     uint256 quantity;
     address mintTo;
     uint256 maxTotalCost;
+    string comment;
 }
 
 function collect(
@@ -369,7 +370,7 @@ Minter:
   9. emits collect, revenue, comment, and shell events
 ```
 
-Batch collect should require `msg.value` to equal the aggregate ETH cost, then process each item with the same per-item accounting. The result of one `batchCollect` should match repeated single `collect` calls, except the payer pays transaction overhead once.
+Batch collect should require `msg.value` to equal the aggregate ETH cost, then process each item with the same per-item accounting and per-item comment handling. The result of one `batchCollect` should match repeated single `collect` calls, except the payer pays transaction overhead once.
 
 ## TortoiseShell ETH Migration
 
@@ -398,7 +399,7 @@ function creditStake(
 
 The minter should call `creditStake(mintTo, 1)` only for the first eligible wallet/song collect, regardless of how many copies are minted in that transaction. Treat the second argument as reward units, not mint quantity. If `mintTo` receives the expected TORT credit and the staking fee is nonzero, the minter should call `depositRewards{value: stakingFee}()`. If crediting fails or returns less than expected, the staking fee should remain artist revenue so collection is not blocked.
 
-For delegated shell reward claims, `_claimRewards(user, payoutTo, amount)` must debit and send exactly `amount`, not the full unpaid balance. The public claim surface should still allow a reward owner to claim any amount up to `userUnpaidRewards[user]`. Delegated claims must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; `rewardClaimNonces[user]` increments on every successful delegated claim so old signatures cannot withdraw later rewards.
+For delegated shell reward claims, `_claimRewards(user, payoutTo, amount)` must debit and send exactly `amount`, not the full unpaid balance. The public claim surface should still allow a reward owner to claim any amount up to `userUnpaidRewards[user]`. Delegated claims must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; `rewardClaimNonces[user]` increments on every successful reward payout, direct or delegated, so old signatures cannot withdraw later rewards.
 
 ## Backend Indexing Plan
 
@@ -469,13 +470,16 @@ Remove reliance on:
 
 ### Base Mainnet
 
-1. Deploy `TortoiseInProcessMinter`.
-2. Register it on `TortoiseShell`.
-3. Run a dry-run script against a fork for collection creation setup actions.
-4. Create a small production test collection/token.
-5. Configure sale with a low price.
-6. Execute a test collect from a controlled wallet.
-7. Verify Tortoise UI/indexer, ERC-1155 wallet visibility, ETH distribution, and shell credit.
+1. Deploy or reuse the ETH-native `TortoiseShell`.
+2. Deploy `TortoiseInProcessMinter`.
+3. Register the minter as an authorized caller on `TortoiseShell`.
+4. Fund the shell TORT pool.
+5. Set `tortRewardPerCollection` on `TortoiseShell`.
+6. Run a dry-run script against a fork for collection creation setup actions.
+7. Create a small production test collection/token.
+8. Configure sale with a low price.
+9. Execute a test collect from a controlled wallet.
+10. Verify Tortoise UI/indexer, ERC-1155 wallet visibility, ETH distribution, and shell credit.
 
 ## Testing Plan
 
@@ -507,11 +511,15 @@ Remove reliance on:
 - Invalid sale update signature reverts.
 - Empty comment does not emit `MintComment`.
 - Non-empty comment emits `MintComment`.
+- Batch collect emits per-item `MintComment` for each non-empty item comment.
 - Comment over 500 bytes reverts with `CommentTooLong`.
 - Comments are never stored in contract state.
 - Pending claims.
+- Pending claim direct and delegated payouts both decrement `totalPendingClaims` and advance `claimPayoutNonces`.
+- Shell reward direct and delegated payouts both advance `rewardClaimNonces`.
 - Shell disabled.
 - Shell credit failure.
+- Partial shell credit leaves wallet/song reward entitlement unclaimed.
 - Fee caps and fee-rounding protection.
 - Pause behavior.
 - Reentrancy-sensitive paths.
@@ -539,14 +547,14 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 - All distribution-path sends use a `_safeSendETH(to, amount)` helper that forwards a fixed gas stipend (30,000) and returns a boolean. Failure does not revert the collect.
 - On failure, the amount is recorded in `pendingClaims[songKey][recipient]` and `SplitPaymentDeferred` is emitted. Applies to platform fee, every artist split, and the artist-default recipient.
-- Pending ETH claims must support an alternate payout recipient. Recommended surface: `claimPendingTo(collection, tokenId, recipient, payoutTo, amount, nonce, deadline, authorization)`, where `recipient` can claim directly with `msg.sender == recipient` or authorize `payoutTo` with EIP-712/EIP-1271. The authorization must bind `collection`, `tokenId`, `recipient`, `payoutTo`, `amount`, `nonce`, and `deadline`; `claimPayoutNonces[songKey][recipient]` increments on every successful authorized claim. This avoids permanently trapping revenue when the recorded recipient is a contract wallet or vault that rejects raw ETH or needs more than the send stipend, while preventing an old authorization from redirecting later deferred revenue.
+- Pending ETH claims must support an alternate payout recipient. Recommended surface: `claimPendingTo(collection, tokenId, recipient, payoutTo, amount, nonce, deadline, authorization)`, where `recipient` can claim directly with `msg.sender == recipient` or authorize `payoutTo` with EIP-712/EIP-1271. The authorization must bind `collection`, `tokenId`, `recipient`, `payoutTo`, `amount`, `nonce`, and `deadline`; `claimPayoutNonces[songKey][recipient]` increments on every successful pending-claim payout, direct or delegated. This avoids permanently trapping revenue when the recorded recipient is a contract wallet or vault that rejects raw ETH or needs more than the send stipend, while preventing an old authorization from redirecting later deferred revenue.
 - The shell's `depositRewards{value: stakingFee}` call is wrapped in `try/catch`. On revert, the staking fee is folded back into artist revenue and re-distributed via the same split path. Emits `ShellDepositFailed`. (No double-payment risk — the shell call happens before split distribution, so artist revenue is recomputed.)
 - Strict checks-effects-interactions inside `_distribute`: per-wallet cap write → `adminMint` → `creditStake` → `depositRewards` → platform send → split sends. Each external call is preceded by a state write.
 - `nonReentrant` (transient guard) on `collect`, `batchCollect`, `claimPending`, and `claimPendingTo`.
 
 ### D.3 — `mintTo` recipient and per-wallet cap
 
-- `collect(address collection, uint256 tokenId, uint256 quantity, uint256 maxTotalCost, address mintTo, string calldata comment)` and the equivalent `CollectItem` entry in `batchCollect` both carry an explicit `mintTo`. `msg.sender` is unreliable on Base under smart-wallet relayers (Coinbase Smart Wallet, paymasters, Safes); attribution must be on the recipient, not the relayer.
+- `collect(address collection, uint256 tokenId, uint256 quantity, uint256 maxTotalCost, address mintTo, string calldata comment)` and the equivalent `CollectItem` entry in `batchCollect` both carry an explicit `mintTo` and per-item `comment`. `msg.sender` is unreliable on Base under smart-wallet relayers (Coinbase Smart Wallet, paymasters, Safes); attribution must be on the recipient, not the relayer.
 - `mintTo == address(0)` reverts `ZeroAddress`. Otherwise unrestricted (gift mints, sponsored relays, smart-wallet routes all work).
 - Per-wallet cap storage: `mapping(bytes32 songKey => mapping(address => uint64)) public mintedByAddress;` keyed on `mintTo`.
 - `tortRewardClaimed[songKey][mintTo]` — shell credit is attributed to the recipient.
@@ -562,6 +570,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 - `batchCollect` is all-or-nothing. Any item revert tears down the whole tx.
 - Each item mints with one `adminMint(mintTo, tokenId, quantity, "")` call. Do not assume the In Process/Zora creator exposes a public `adminMintBatch`; fork tests should fail if implementation accidentally reintroduces that dependency.
+- Each item carries its own comment and applies the same `MintComment` rules as a single `collect`; empty per-item comments emit no comment event.
 - Per-item distribution runs immediately after that item's `adminMint` succeeds. Any later item revert still reverts the whole transaction because `batchCollect` is all-or-nothing.
 - `MAX_BATCH_ITEMS = 20`. Phase-2 gas test asserts a worst-case 20-item × 10-split-each batch fits under 20M gas on Base.
 
@@ -575,7 +584,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 ### D.7 — Pending-claim ETH accounting
 
-- Storage: `uint256 public totalPendingClaims;` Increment in `_recordPendingClaim`, decrement in `claimPending`.
+- Storage: `uint256 public totalPendingClaims;` Increment in `_recordPendingClaim`, decrement by the paid amount in every successful pending payout path, including `claimPending` and `claimPendingTo`.
 - Invariant (Phase-2 invariant test): `address(this).balance >= totalPendingClaims` at every external-call boundary.
 - No `recoverETH` function on the minter. ERC-20 `recoverTokens(token, amount)` remains for stray tokens.
 
@@ -588,7 +597,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 | Already claimed | unchanged (true) | Artist revenue (no diversion) | none |
 | `creditStake` reverts | unchanged (false) | Artist revenue | `ShellCreditFailed` |
 | `creditStake` returns 0 | unchanged (false) | Artist revenue | `ShellCreditFailed` |
-| Returns `0 < n < expected` | set to true | Artist revenue | `ShellCreditFailed(expectedCredit, actualCredit)` |
+| Returns `0 < n < expected` | unchanged (false) | Artist revenue | `ShellCreditFailed(expectedCredit, actualCredit)` |
 | Returns full | set to true | Shell via `depositRewards{value:}` | `StakeCredited` |
 | Full credit but `depositRewards` reverts | set to true (user got TORT) | Artist revenue | `ShellDepositFailed` |
 
@@ -611,11 +620,11 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 - `MIN_REWARD_DEPOSIT = 1e15` wei (0.001 ETH). Document threat model in the contract: prevents cap-and-extend `rewardRate` dilution via dust deposits.
 - `depositRewards()` is `external payable onlyAuthorizedCaller updateReward(address(0))`. No `amount` arg. Reconciles via `actual = address(this).balance - totalRewardsDeposited`. (TORT is ERC-20, separate balance, doesn't offset.)
 - `_addReward(reward)` accepts wei directly (no `*= REWARD_SCALAR`).
-- `_claimRewards(user, payoutTo, amount)` requires `amount <= userUnpaidRewards[user]`, debits exactly `amount`, and uses `_safeSendETH` with revert-on-failure. The public claim surface must let the reward owner choose a payable recipient, and should support EIP-712/EIP-1271 authorization for contract wallets or vaults that cannot receive raw ETH directly. Any delegated claim must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; `rewardClaimNonces[user]` increments on every successful delegated claim so old signatures cannot withdraw later rewards.
+- `_claimRewards(user, payoutTo, amount)` requires `amount <= userUnpaidRewards[user]`, debits exactly `amount`, increments `rewardClaimNonces[user]`, and uses `_safeSendETH` with revert-on-failure. The public claim surface must let the reward owner choose a payable recipient, and should support EIP-712/EIP-1271 authorization for contract wallets or vaults that cannot receive raw ETH directly. Any delegated claim must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; the shared nonce advances on every successful reward payout, direct or delegated, so old signatures cannot withdraw later rewards.
 - `receive() external payable` reverts unless `authorizedCallers[msg.sender]`. Plain sends rejected; `selfdestruct` ETH still lands and is automatically swept on the next `depositRewards` reconciliation (documented behavior).
 - No `recoverETH`. `recoverTokens(token, amount)` exists for stray ERC-20s with `token != address(stakingToken)`.
 - All `require("...")` strings replaced with custom errors (`CallerMustBeContract`, `RenouncingOwnershipDisabled`, `CannotRecoverStakingToken`).
-- `creditStake(user, rewardUnits)` returns reduced credit when `tortPool` is short; the minter passes `1` for the first eligible wallet/song collect and consumes the result per D.8. Any positive credit consumes the wallet/song reward entitlement unless implementation explicitly tracks a remaining entitlement.
+- `creditStake(user, rewardUnits)` returns reduced credit when `tortPool` is short; the minter passes `1` for the first eligible wallet/song collect and consumes the result per D.8. Only full credit consumes the wallet/song reward entitlement unless implementation explicitly tracks and later satisfies a remaining entitlement.
 
 ### D.12 — Cleanup
 
@@ -772,7 +781,7 @@ ClaimPendingTo(address collection,uint256 tokenId,address recipient,address payo
 
 Nonce: `mapping(bytes32 songKey => mapping(address recipient => uint256)) public claimPayoutNonces;`.
 
-The amount is signed so an authorization for one deferred payout cannot be replayed against later revenue for the same song and recipient. The implementation should require `amount <= pendingClaims[songKey][recipient]`, increment the nonce before the ETH send, and debit exactly `amount`.
+The amount is signed so an authorization for one deferred payout cannot be replayed against later revenue for the same song and recipient. The implementation should require `amount <= pendingClaims[songKey][recipient]`, increment the nonce before the ETH send, debit exactly `amount`, and decrement `totalPendingClaims` by exactly `amount`. Direct recipient claims use the same nonce and also increment it on success so outstanding delegated authorizations become stale.
 
 ### S.5 — `ClaimShellRewardsTo` (ETH shell rewards)
 
@@ -784,7 +793,7 @@ ClaimShellRewardsTo(address user,address payoutTo,uint256 amount,uint256 nonce,u
 
 Nonce: `mapping(address user => uint256) public rewardClaimNonces;`.
 
-The amount is signed so an authorization for current accrued rewards cannot be replayed against future rewards. The implementation should require `amount <= claimableRewards(user)`, increment the nonce before the ETH send, and debit exactly `amount`.
+The amount is signed so an authorization for current accrued rewards cannot be replayed against future rewards. The implementation should require `amount <= claimableRewards(user)`, increment the nonce before the ETH send, and debit exactly `amount`. Direct reward claims use the same nonce and also increment it on success so outstanding delegated authorizations become stale.
 
 ## In Process Team Dependency
 

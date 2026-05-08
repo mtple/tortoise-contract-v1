@@ -60,7 +60,7 @@ ETH-native staking and collector-credit contract.
 
 - Users stake TORT and earn native ETH rewards from collection fees.
 - `depositRewards()` is payable.
-- `creditStake(user, quantity)` credits collectors from a pre-funded TORT pool.
+- `creditStake(user, rewardUnits)` credits collectors from a pre-funded TORT pool; the minter passes `1` per eligible wallet/song collect, regardless of mint quantity.
 - Reward claims pay native ETH.
 - The existing USDC shell in `src/` is a prototype reference and will be replaced.
 
