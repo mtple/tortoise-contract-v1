@@ -17,12 +17,14 @@ The information here is a precondition for Phase 3 (Direct Creation Scripts) in 
 
 ### Base Sepolia
 
-The factory address differs from mainnet. Pin from the In Process testnet docs before deploying test collections:
+The factory address differs from mainnet and must be treated as environment-specific. The verified source name may still be `ZoraCreator1155FactoryImpl` because In Process uses a Zora-derived creator stack; that does not make every Zora deployment an In Process deployment.
 
 | Contract | Address | Source / Verification |
 | --- | --- | --- |
-| `Creator1155FactoryImpl` | `0x6832A997D8616707C7b68721D6E9332E77da7F6C` | In Process testnet docs; fork-verify before testnet rollout |
-| Creator1155 implementation | TBD | `factory.zora1155Impl()` |
+| In Process `Creator1155FactoryImpl` | TBD | Confirm from In Process testnet docs/team before deploying Tortoise test collections |
+| Candidate from existing Tortoise notes | `0x6832A997D8616707C7b68721D6E9332E77da7F6C` | RPC verifies `contractName() == "ZORA 1155 Contract Factory"` and `contractVersion() == "2.13.2"`; do not use until confirmed as In Process-owned/approved |
+| Verified canonical Zora factory | `0x3b82f0910B67Af840bD90bF6E45537c5B72c893e` | BaseScan-verified `ZoraCreator1155FactoryImpl`, `contractVersion() == "2.13.1"`; reference only unless Tortoise intentionally chooses canonical Zora testnet contracts |
+| Creator1155 implementation | TBD | Read from the confirmed factory's `zora1155Impl()` |
 | `PERMISSION_BIT_ADMIN` | `2` | Same constant |
 | `PERMISSION_BIT_MINTER` | `4` | Same constant |
 

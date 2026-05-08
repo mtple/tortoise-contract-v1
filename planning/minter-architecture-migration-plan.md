@@ -182,6 +182,7 @@ function setSaleWithArtistSignature(
     address collection,
     uint256 tokenId,
     SaleUpdate calldata config,
+    uint256 nonce,
     uint256 deadline,
     bytes calldata artistSignature
 ) external;
@@ -528,7 +529,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 - All distribution-path sends use a `_safeSendETH(to, amount)` helper that forwards a fixed gas stipend (30,000) and returns a boolean. Failure does not revert the collect.
 - On failure, the amount is recorded in `pendingClaims[songKey][recipient]` and `SplitPaymentDeferred` is emitted. Applies to platform fee, every artist split, and the artist-default recipient.
-- Pending ETH claims must support an alternate payout recipient. Recommended surface: `claimPendingTo(collection, tokenId, recipient, payoutTo, authorization)`, where `recipient` can claim directly with `msg.sender == recipient` or authorize `payoutTo` with EIP-712/EIP-1271. This avoids permanently trapping revenue when the recorded recipient is a contract wallet or vault that rejects raw ETH or needs more than the send stipend.
+- Pending ETH claims must support an alternate payout recipient. Recommended surface: `claimPendingTo(collection, tokenId, recipient, payoutTo, amount, nonce, deadline, authorization)`, where `recipient` can claim directly with `msg.sender == recipient` or authorize `payoutTo` with EIP-712/EIP-1271. The authorization must bind `collection`, `tokenId`, `recipient`, `payoutTo`, `amount`, `nonce`, and `deadline`; `claimPayoutNonces[songKey][recipient]` increments on every successful authorized claim. This avoids permanently trapping revenue when the recorded recipient is a contract wallet or vault that rejects raw ETH or needs more than the send stipend, while preventing an old authorization from redirecting later deferred revenue.
 - The shell's `depositRewards{value: stakingFee}` call is wrapped in `try/catch`. On revert, the staking fee is folded back into artist revenue and re-distributed via the same split path. Emits `ShellDepositFailed`. (No double-payment risk — the shell call happens before split distribution, so artist revenue is recomputed.)
 - Strict checks-effects-interactions inside `_distribute`: per-wallet cap write → `adminMint` → `creditStake` → `depositRewards` → platform send → split sends. Each external call is preceded by a state write.
 - `nonReentrant` (transient guard) on `collect`, `batchCollect`, `claimPending`, and `claimPendingTo`.
@@ -600,7 +601,7 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 - `MIN_REWARD_DEPOSIT = 1e15` wei (0.001 ETH). Document threat model in the contract: prevents cap-and-extend `rewardRate` dilution via dust deposits.
 - `depositRewards()` is `external payable onlyAuthorizedCaller updateReward(address(0))`. No `amount` arg. Reconciles via `actual = address(this).balance - totalRewardsDeposited`. (TORT is ERC-20, separate balance, doesn't offset.)
 - `_addReward(reward)` accepts wei directly (no `*= REWARD_SCALAR`).
-- `_claimRewards(user, payoutTo)` pays out `userUnpaidRewards[user]` in wei and uses `_safeSendETH` with revert-on-failure. The public claim surface must let the reward owner choose a payable recipient, and should support EIP-712/EIP-1271 authorization for contract wallets or vaults that cannot receive raw ETH directly.
+- `_claimRewards(user, payoutTo, amount)` pays out `userUnpaidRewards[user]` in wei and uses `_safeSendETH` with revert-on-failure. The public claim surface must let the reward owner choose a payable recipient, and should support EIP-712/EIP-1271 authorization for contract wallets or vaults that cannot receive raw ETH directly. Any delegated claim must bind `user`, `payoutTo`, `amount`, `nonce`, and `deadline`; `rewardClaimNonces[user]` increments on every successful delegated claim so old signatures cannot withdraw later rewards.
 - `receive() external payable` reverts unless `authorizedCallers[msg.sender]`. Plain sends rejected; `selfdestruct` ETH still lands and is automatically swept on the next `depositRewards` reconciliation (documented behavior).
 - No `recoverETH`. `recoverTokens(token, amount)` exists for stray ERC-20s with `token != address(stakingToken)`.
 - All `require("...")` strings replaced with custom errors (`CallerMustBeContract`, `RenouncingOwnershipDisabled`, `CannotRecoverStakingToken`).
@@ -740,8 +741,36 @@ Before audit, ship `test/fixtures/eip712-vectors.json` containing:
 - 1 `SetSale` signature signed by a non-artist EOA.
 - 3 valid `RegisterSongWithSplits` signatures.
 - 1 `RegisterSongWithSplits` signature with mutated `splitsHash`.
+- 2 valid `ClaimPendingTo` signatures with distinct nonces and amounts.
+- 1 replayed `ClaimPendingTo` signature.
+- 2 valid `ClaimShellRewardsTo` signatures with distinct nonces and amounts.
+- 1 replayed `ClaimShellRewardsTo` signature.
 
 Vectors are generated off-chain (viem or `cast wallet sign-typed-data`) and asserted onchain in a Foundry test that calls public hashing helpers and `SignatureChecker`. This catches drift between off-chain signing infrastructure and onchain verification before mainnet deployment.
+
+### S.4 — `ClaimPendingTo` (deferred minter payouts)
+
+Typehash:
+
+```
+ClaimPendingTo(address collection,uint256 tokenId,address recipient,address payoutTo,uint256 amount,uint256 nonce,uint256 deadline)
+```
+
+Nonce: `mapping(bytes32 songKey => mapping(address recipient => uint256)) public claimPayoutNonces;`.
+
+The amount is signed so an authorization for one deferred payout cannot be replayed against later revenue for the same song and recipient. The implementation should require `amount <= pendingClaims[songKey][recipient]`, increment the nonce before the ETH send, and debit exactly `amount`.
+
+### S.5 — `ClaimShellRewardsTo` (ETH shell rewards)
+
+Typehash:
+
+```
+ClaimShellRewardsTo(address user,address payoutTo,uint256 amount,uint256 nonce,uint256 deadline)
+```
+
+Nonce: `mapping(address user => uint256) public rewardClaimNonces;`.
+
+The amount is signed so an authorization for current accrued rewards cannot be replayed against future rewards. The implementation should require `amount <= claimableRewards(user)`, increment the nonce before the ETH send, and debit exactly `amount`.
 
 ## In Process Team Dependency
 
