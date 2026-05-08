@@ -102,7 +102,7 @@ actions[1] = abi.encodeWithSignature(
 
 - For a brand-new album collection, precompute token ids as `1..N` in setup-action order.
 - For an existing collection, compute `expectedTokenId = lastKnownTokenId + 1` from Tortoise's indexed state and prepend an `assumeLastTokenIdMatches(lastKnownTokenId)` action when using a multicall/setup-action bundle. This makes stale backend state revert instead of granting permission on the wrong token.
-- The backend reads the actual emitted token id from the `SetupNewToken` event after the tx confirms and persists it. Fork tests must prove the precomputed value matches the event before rollout.
+- The backend reads the actual emitted token id from the creator's token creation/update log after the tx confirms and persists it. Treat `UpdatedToken` as the primary event to parse unless fork tests pin a different deployed event; cross-check `SetupNewToken` only if the live implementation emits it. Fork tests must prove the precomputed value matches the emitted event before rollout.
 
 For unlimited/open editions, use the Zora/In Process open-edition sentinel validated in fork tests. Current recommendation is `OPEN_EDITION_MAX_SUPPLY = 18446744073709551615` (`type(uint64).max`), matching the In Process API default. Do not use `0` for unlimited; treat `0` as invalid in Tortoise input validation unless a fork test proves otherwise.
 
@@ -152,8 +152,9 @@ Fork tests must verify this three-action sequence (`setupNewToken`, optional `up
 - The operator wallet holds `PERMISSION_BIT_ADMIN` (`2`) on every Tortoise-managed collection.
 - For new collections, the operator passes its own address as `defaultAdmin` in `createContract`. Subsequent token setup actions inherit admin rights from the collection.
 - For "Add Track To Existing Collection," the operator's address must already hold per-collection admin (granted at collection creation). No artist-admin path is supported in v1; all collections are deployed by Tortoise with the operator as default admin.
-- Operator wallet must be funded with ETH on Base mainnet for: collection creation gas (~one-time per album), `setupNewToken` per track, and `setSale` per track. Estimate **0.01 ETH per album** for budgeting; refine after Phase-2 gas tests.
-- Pending claims are user-claimed (`claimPending`); the operator does not need ETH for those.
+- The account that submits `setSale`, `registerSong`, or `registerSongWithSplits` must be the `TortoiseInProcessMinter` owner or an explicitly authorized minter operator if that role is added during implementation. Collection admin permission alone is not enough for minter-owner-gated calls.
+- Operator wallet must be funded with ETH on Base mainnet for: collection creation gas (~one-time per album), `setupNewToken` per track, and any minter owner/operator transactions. Estimate **0.01 ETH per album** for budgeting; refine after Phase-2 gas tests.
+- Pending claims are user-claimed (`claimPending` / `claimPendingTo`); the operator does not need ETH for those.
 
 ## C.5 — Collection creation flow (new album)
 
@@ -161,9 +162,9 @@ Fork tests must verify this three-action sequence (`setupNewToken`, optional `up
 2. Backend uploads each track's audio + token metadata to Arweave.
 3. Backend constructs `setupActions` for every track using the template in §C.3, with the operator wallet as `defaultAdmin`.
 4. Backend calls `factory.createContract(contractURI, name, defaultRoyalty, operator, setupActions)`.
-5. Backend reads the new collection address from the return value (and the factory event for cross-check).
-6. Backend reads each emitted `SetupNewToken` event for the actual `tokenId`, persists `(collectionAddress, tokenId)` per track row, and issues `setSale` to `TortoiseInProcessMinter` for each.
-7. Backend issues `registerSongWithSplits` (or `registerSong`) on the minter to onboard each track for distribution and shell crediting.
+5. Backend reads the new collection address from the factory `SetupNewContract` event or a deterministic precompute. Do not rely on transaction return data from a normal submitted transaction.
+6. Backend reads each emitted token creation/update event for the actual `tokenId`, persists `(collectionAddress, tokenId)` per track row, and issues `setSale` to `TortoiseInProcessMinter` for each from the minter owner/operator signer.
+7. Backend issues `registerSongWithSplits` (or `registerSong`) on the minter from the minter owner/operator signer to onboard each track for distribution and shell crediting.
 
 ## C.6 — Add-track flow (existing album)
 
@@ -175,7 +176,7 @@ Fork tests must verify this three-action sequence (`setupNewToken`, optional `up
 
 ## C.7 — "No ETH leaves" invariant during creation
 
-The factory and creator implementation should not consume ETH for `createContract`, `setupNewToken`, `updateRoyaltiesForToken`, or `addPermission`. Phase-2 fork test asserts:
+The factory and creator implementation should not consume ETH for `createContract`, `setupNewToken`, `updateRoyaltiesForToken`, or `addPermission`. Phase-2 fork tests should assert this with a gas-neutral test contract or escrow balance:
 
 ```solidity
 uint256 balanceBefore = address(this).balance;
@@ -195,7 +196,7 @@ Phase-2 fork tests assert each of the following before mainnet rollout:
 4. A fork-deployed test collection produced via `createContract` with the §C.3 `setupActions` template results in `TortoiseInProcessMinter` holding `PERMISSION_BIT_MINTER` on the new tokenId.
 5. `adminMint(mintTo, tokenId, quantity, "")` from `TortoiseInProcessMinter` succeeds.
 6. Multi-item Tortoise `batchCollect` succeeds by looping `adminMint` once per item and produces the expected balances.
-7. `assertEq(address(deployer).balance, balanceBefore)` across the entire creation flow.
+7. No ETH value is consumed by the factory/creator calls, measured with a gas-neutral test contract or with sender balance adjusted for `gasUsed * gasPrice`.
 8. `assumeLastTokenIdMatches(lastKnownTokenId)` reverts when `lastKnownTokenId` is stale and succeeds when it is fresh.
 
 ## C.9 — Required mocks for unit tests
@@ -204,7 +205,8 @@ Phase-2 fork tests assert each of the following before mainnet rollout:
 
 - `mapping(uint256 tokenId => uint256) maxSupply`, `mapping(uint256 tokenId => uint256) totalMinted`.
 - `mapping(uint256 tokenId => mapping(address => mapping(uint256 => bool))) permission`.
-- `adminMint` reverts on `totalMinted + quantity > maxSupply` when set.
+- `setMaxSupply(0)` reverts; tests must use an explicit finite cap or the open-edition sentinel.
+- `adminMint` always reverts on `totalMinted + quantity > maxSupply`.
 - `adminMint` reverts unless caller has `PERMISSION_BIT_MINTER` for the tokenId.
 - ERC-1155 `_balances` map for `balanceOf` reads.
 - Test-only setters: `setMaxSupply`, `grantPermission`.

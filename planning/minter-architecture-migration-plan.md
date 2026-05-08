@@ -95,10 +95,11 @@ Confirmed Base addresses:
 
 ### Add Track To Existing Tortoise Collection
 
-1. Backend verifies the artist can administer the target collection.
-2. Backend calls the collection directly to create/setup the new token.
-3. Backend grants `PERMISSION_BIT_MINTER` to `TortoiseInProcessMinter` for the token.
-4. Backend registers sale config and splits in the Tortoise minter.
+1. Backend verifies the artist is allowed in Tortoise's product/admin model to add a track to the target album.
+2. Backend verifies the Tortoise operator, not necessarily the artist, holds collection admin permission onchain.
+3. Backend calls the collection directly to create/setup the new token.
+4. Backend grants `PERMISSION_BIT_MINTER` to `TortoiseInProcessMinter` for the token.
+5. Backend registers sale config and splits in the Tortoise minter from the minter owner/operator signer.
 
 ### Important Change
 
@@ -142,6 +143,13 @@ struct SaleConfig {
     bool exists;
 }
 
+struct SaleUpdate {
+    uint64 saleStart;
+    uint64 saleEnd;
+    uint64 maxTokensPerAddress;
+    uint256 pricePerToken;
+}
+
 struct CollectItem {
     address collection;
     uint256 tokenId;
@@ -167,13 +175,13 @@ function batchCollect(
 function setSale(
     address collection,
     uint256 tokenId,
-    SaleConfig calldata config
+    SaleUpdate calldata config
 ) external;
 
 function setSaleWithArtistSignature(
     address collection,
     uint256 tokenId,
-    SaleConfig calldata config,
+    SaleUpdate calldata config,
     uint256 deadline,
     bytes calldata artistSignature
 ) external;
@@ -236,9 +244,10 @@ event SongCollected(
 );
 
 event MintComment(
-    address indexed collector,
     address indexed collection,
     uint256 indexed tokenId,
+    address indexed collector,
+    address payer,
     uint256 quantity,
     string comment
 );
@@ -391,8 +400,11 @@ Tortoise should run a small indexer or event listener for:
 - `RevenueDistributed`
 - `StakeCredited`
 - `ShellCreditFailed`
+- `ShellDepositFailed`
 - `SplitsConfigured`
 - `SplitsLocked`
+- `SplitPaymentDeferred`
+- `PaymentDistributed`
 - ERC-1155 `TransferSingle`
 - ERC-1155 `TransferBatch`
 
@@ -507,7 +519,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 ### D.1 — Sale-update authority and signatures
 
-- `setSale(address collection, uint256 tokenId, SaleConfig config)` is `onlyOwner`. Used for emergency / initial / operator-as-owner flows. Bumps `saleUpdateNonces[songKey]`.
+- `setSale(address collection, uint256 tokenId, SaleUpdate config)` is `onlyOwner`. Used for emergency / initial / operator-as-owner flows. Bumps `saleUpdateNonces[songKey]`.
 - `setSaleWithArtistSignature(...)` is callable by anyone (operator relay). Signature must verify against `songArtist[songKey]` at consume time. Deadline enforced. Bumps `saleUpdateNonces[songKey]`.
 - Owner can override an in-flight artist signature at any time; the nonce bump invalidates the artist's pending submission.
 - See "EIP-712 Schemas" below for the typed-data definition.
@@ -516,9 +528,10 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 - All distribution-path sends use a `_safeSendETH(to, amount)` helper that forwards a fixed gas stipend (30,000) and returns a boolean. Failure does not revert the collect.
 - On failure, the amount is recorded in `pendingClaims[songKey][recipient]` and `SplitPaymentDeferred` is emitted. Applies to platform fee, every artist split, and the artist-default recipient.
+- Pending ETH claims must support an alternate payout recipient. Recommended surface: `claimPendingTo(collection, tokenId, recipient, payoutTo, authorization)`, where `recipient` can claim directly with `msg.sender == recipient` or authorize `payoutTo` with EIP-712/EIP-1271. This avoids permanently trapping revenue when the recorded recipient is a contract wallet or vault that rejects raw ETH or needs more than the send stipend.
 - The shell's `depositRewards{value: stakingFee}` call is wrapped in `try/catch`. On revert, the staking fee is folded back into artist revenue and re-distributed via the same split path. Emits `ShellDepositFailed`. (No double-payment risk — the shell call happens before split distribution, so artist revenue is recomputed.)
 - Strict checks-effects-interactions inside `_distribute`: per-wallet cap write → `adminMint` → `creditStake` → `depositRewards` → platform send → split sends. Each external call is preceded by a state write.
-- `nonReentrant` (transient guard) on `collect`, `batchCollect`, `claimPending`.
+- `nonReentrant` (transient guard) on `collect`, `batchCollect`, `claimPending`, and `claimPendingTo`.
 
 ### D.3 — `mintTo` recipient and per-wallet cap
 
@@ -526,7 +539,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 - `mintTo == address(0)` reverts `ZeroAddress`. Otherwise unrestricted (gift mints, sponsored relays, smart-wallet routes all work).
 - Per-wallet cap storage: `mapping(bytes32 songKey => mapping(address => uint64)) public mintedByAddress;` keyed on `mintTo`.
 - `tortRewardClaimed[songKey][mintTo]` — shell credit is attributed to the recipient.
-- `MintComment` event's collector field is `mintTo`.
+- `MintComment` event's collector field is `mintTo`; its payer field is `msg.sender` and should be treated as the comment author.
 - `SongCollected` includes both `mintTo` (collector) and `payer` (`msg.sender`) so the indexer can distinguish self vs. relayed collects.
 
 ### D.4 — Refund policy
@@ -545,7 +558,8 @@ These decisions are derived from review of the plan and resolve ambiguities that
 
 - Contract enforces `bytes(comment).length <= 500` and reverts `CommentTooLong` otherwise.
 - Empty comment → no `MintComment` emit.
-- Non-empty comment → emit `MintComment(mintTo, collection, tokenId, quantity, comment)`. Never stored in contract state.
+- Non-empty comment → emit `MintComment(collection, tokenId, mintTo, msg.sender, quantity, comment)`. Never stored in contract state.
+- UI should attribute the comment to `payer`, not blindly to `mintTo`, because unrestricted gift mints can attach comments to another recipient's token.
 - Frontend hard-truncates to 500 UTF-8 bytes with a visible counter.
 
 ### D.7 — Pending-claim ETH accounting
@@ -563,7 +577,7 @@ These decisions are derived from review of the plan and resolve ambiguities that
 | Already claimed | unchanged (true) | Artist revenue (no diversion) | none |
 | `creditStake` reverts | unchanged (false) | Artist revenue | `ShellCreditFailed` |
 | `creditStake` returns 0 | unchanged (false) | Artist revenue | `ShellCreditFailed` |
-| Returns `0 < n < expected` | unchanged (false) | Artist revenue | `ShellCreditFailed(expectedCredit, actualCredit)` |
+| Returns `0 < n < expected` | set to true | Artist revenue | `ShellCreditFailed(expectedCredit, actualCredit)` |
 | Returns full | set to true | Shell via `depositRewards{value:}` | `StakeCredited` |
 | Full credit but `depositRewards` reverts | set to true (user got TORT) | Artist revenue | `ShellDepositFailed` |
 
@@ -586,11 +600,11 @@ The existing prototype `src/TortoiseShell.sol` is USDC-based and will be replace
 - `MIN_REWARD_DEPOSIT = 1e15` wei (0.001 ETH). Document threat model in the contract: prevents cap-and-extend `rewardRate` dilution via dust deposits.
 - `depositRewards()` is `external payable onlyAuthorizedCaller updateReward(address(0))`. No `amount` arg. Reconciles via `actual = address(this).balance - totalRewardsDeposited`. (TORT is ERC-20, separate balance, doesn't offset.)
 - `_addReward(reward)` accepts wei directly (no `*= REWARD_SCALAR`).
-- `_claimRewards(user)` pays out `userUnpaidRewards[user]` in wei and uses `_safeSendETH` with revert-on-failure (claim is user-initiated; failing loud is correct so the user can retry from a working wallet).
+- `_claimRewards(user, payoutTo)` pays out `userUnpaidRewards[user]` in wei and uses `_safeSendETH` with revert-on-failure. The public claim surface must let the reward owner choose a payable recipient, and should support EIP-712/EIP-1271 authorization for contract wallets or vaults that cannot receive raw ETH directly.
 - `receive() external payable` reverts unless `authorizedCallers[msg.sender]`. Plain sends rejected; `selfdestruct` ETH still lands and is automatically swept on the next `depositRewards` reconciliation (documented behavior).
 - No `recoverETH`. `recoverTokens(token, amount)` exists for stray ERC-20s with `token != address(stakingToken)`.
 - All `require("...")` strings replaced with custom errors (`CallerMustBeContract`, `RenouncingOwnershipDisabled`, `CannotRecoverStakingToken`).
-- `creditStake(user, quantity)` returns reduced credit when `tortPool` is short; the minter consumes that semantics per D.8.
+- `creditStake(user, quantity)` returns reduced credit when `tortPool` is short; the minter consumes that semantics per D.8. Any positive credit consumes the wallet/song reward entitlement unless implementation explicitly tracks a remaining entitlement.
 
 ### D.12 — Cleanup
 
@@ -663,7 +677,7 @@ Typehash:
 SetSale(address collection,uint256 tokenId,bytes32 saleHash,uint256 nonce,uint256 deadline)
 ```
 
-`saleHash` covers only the four updatable fields of `SaleConfig`:
+`saleHash` covers the four fields of `SaleUpdate`:
 
 ```solidity
 bytes32 saleHash = keccak256(abi.encode(
@@ -674,7 +688,7 @@ bytes32 saleHash = keccak256(abi.encode(
 ));
 ```
 
-The internal `exists` flag is contract-state, not part of the signed payload.
+The internal `SaleConfig.exists` flag is contract-state, not part of the signed payload. `setSale` and `setSaleWithArtistSignature` must set `exists = true` internally instead of copying an unsigned calldata field.
 The artist address is not included in the signed payload because the verifier always checks the signature against `songArtist[songKey]`. This avoids a redundant artist field drifting from the registered signer.
 
 Nonce policy:
