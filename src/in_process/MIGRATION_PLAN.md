@@ -505,7 +505,7 @@ Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 - `IOwnable2StepStorageV1.sol` — fix pragma
 - `Ownable2StepUpgradeable.sol` — fix pragma + fix Initializable import path
 
-### Step 5 — Copy and fix minter utility files
+### ✅ Step 5 — Copy and fix minter utility files
 - `TransferHelperUtils.sol` — fix pragma
 - `LimitedMintPerAddress.sol` — fix pragma + fix import path
 - `SaleStrategy.sol` — fix pragma + fix all import paths
