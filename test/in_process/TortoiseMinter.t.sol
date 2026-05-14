@@ -8,49 +8,62 @@ import {IMinter1155} from "../../src/in_process/interfaces/IMinter1155.sol";
 import {
     ILimitedMintPerAddressErrors
 } from "../../src/in_process/interfaces/ILimitedMintPerAddress.sol";
-import {TortoiseMinter} from "../../src/in_process/minters/erc20/TortoiseMinter.sol";
+import {TortoiseMinter} from "../../src/in_process/minters/TortoiseMinter.sol";
 import {ITortoiseMinter} from "../../src/in_process/interfaces/ITortoiseMinter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+contract MockTortoiseShell {
+    uint256 public depositedAmount;
+    uint256 public creditedQuantity;
+    address public creditedUser;
+    uint256 public tortRewardPerCollection = 1e18;
+    uint256 public tortPoolBalance = 1000e18;
+
+    function depositRewards(uint256 amount) external {
+        depositedAmount += amount;
+    }
+
+    function creditStake(address user, uint256 quantity) external returns (uint256) {
+        creditedUser = user;
+        creditedQuantity += quantity;
+        return quantity * tortRewardPerCollection;
+    }
+
+    function getTortPoolBalance() external view returns (uint256) {
+        return tortPoolBalance;
+    }
+}
+
 contract TortoiseMinterTest is Test {
     MockInProcess1155 internal target;
-    MockERC20 currency;
+    MockERC20 internal currency;
+    MockERC20 internal rewardToken;
+    MockTortoiseShell internal shell;
+
     address payable internal admin = payable(address(0x999));
-    address internal inProcess;
     address internal tokenRecipient;
     address internal fundsRecipient;
-    address internal createReferral;
-    address internal mintReferral;
     address internal owner;
     TortoiseMinter internal minter;
     ITortoiseMinter.TortoiseMinterConfig internal minterConfig;
 
-    uint256 internal constant TOTAL_REWARD_PCT = 5;
-    uint256 immutable BPS_TO_PERCENT = 100;
-    uint256 internal constant CREATE_REFERRAL_PAID_MINT_REWARD_PCT = 28_571_400;
-    uint256 internal constant MINT_REFERRAL_PAID_MINT_REWARD_PCT = 28_571_400;
-    uint256 internal constant IN_PROCESS_PAID_MINT_REWARD_PCT = 28_571_400;
-    uint256 internal constant FIRST_MINTER_REWARD_PCT = 14_228_500;
-    uint256 immutable BPS_TO_PERCENT_8_DECIMAL_PERCISION = 100_000_000;
-    uint256 internal constant ethReward = 0.000_111 ether;
+    uint256 internal constant PLATFORM_FEE = 1_000_000; // 1 USDC (6 decimals)
+    uint256 internal constant TORTOISE_FEE_BPS = 2_500;
+    uint256 internal constant BPS_DENOMINATOR = 10_000;
 
-    event ERC20RewardsDeposit(
-        address indexed createReferral,
-        address indexed mintReferral,
-        address indexed firstMinter,
-        address inProcess,
-        address collection,
-        address currency,
+    event Collected(
+        address indexed artist,
+        address indexed collectionAddress,
+        address indexed collector,
         uint256 tokenId,
-        uint256 createReferralReward,
-        uint256 mintReferralReward,
-        uint256 firstMinterReward,
-        uint256 inProcessReward
+        uint256 quantity,
+        address currency,
+        uint256 price,
+        uint256 torsAwarded
     );
 
-    event TortoiseMinterConfigSet(ITortoiseMinter.TortoiseMinterConfig config);
 
-    event OwnerSet(address indexed prevOwner, address indexed owner);
+    event TortoiseMinterConfigSet(ITortoiseMinter.TortoiseMinterConfig config);
 
     event MintComment(
         address indexed sender,
@@ -61,18 +74,19 @@ contract TortoiseMinterTest is Test {
     );
 
     function setUp() external {
-        inProcess = makeAddr("inProcess");
         tokenRecipient = makeAddr("tokenRecipient");
         fundsRecipient = makeAddr("fundsRecipient");
-        createReferral = makeAddr("createReferral");
-        mintReferral = makeAddr("mintReferral");
         owner = makeAddr("owner");
 
         target = new MockInProcess1155();
-        minter = new TortoiseMinter();
-        minter.initialize(inProcess, owner, 5, ethReward);
+        shell = new MockTortoiseShell();
+
         vm.prank(admin);
-        currency = new MockERC20("Test currency", "TEST");
+        currency = new MockERC20("Sale Currency", "SALE");
+        rewardToken = new MockERC20("Reward Token", "USDC");
+
+        minter = new TortoiseMinter();
+        minter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
         minterConfig = minter.getTortoiseMinterConfig();
     }
 
@@ -84,9 +98,7 @@ contract TortoiseMinterTest is Test {
         TortoiseMinter minterContract
     ) internal returns (uint256) {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
-            "https://in-process.xyz/testing/token.json", quantity, createReferral
-        );
+        uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", quantity);
         target.addPermission(newTokenId, address(minterContract), target.PERMISSION_BIT_MINTER());
         target.callSale(
             newTokenId,
@@ -105,61 +117,80 @@ contract TortoiseMinterTest is Test {
             )
         );
         vm.stopPrank();
-
         return newTokenId;
     }
 
-    function test_TortoiseMinterInitializeEventIsEmitted() external {
+    function _approveAndMint(
+        address minter_,
+        address recipient,
+        uint256 quantity,
+        address tokenAddress,
+        uint256 tokenId,
+        uint256 totalValue,
+        address saleCurrency,
+        uint256 totalFee
+    ) internal {
+        vm.startPrank(recipient);
+        IERC20(saleCurrency).approve(minter_, totalValue);
+        IERC20(address(rewardToken)).approve(minter_, totalFee);
+        TortoiseMinter(minter_).mint(recipient, quantity, tokenAddress, tokenId, totalValue, saleCurrency, address(0), "");
+        vm.stopPrank();
+    }
+
+    // ============ Initialize ============
+
+    function test_InitializeEmitsEvent() external {
         vm.expectEmit(true, true, true, true);
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: 5,
-            ethReward: ethReward
+            tortoiseShell: address(shell),
+            rewardToken: address(rewardToken),
+            platformFee: PLATFORM_FEE
         });
         emit TortoiseMinterConfigSet(newConfig);
 
-        minter = new TortoiseMinter();
-        minter.initialize(inProcess, owner, 5, ethReward);
+        TortoiseMinter newMinter = new TortoiseMinter();
+        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
     }
 
-    function test_TortoiseMinterInProcessAddrCannotInitializeWithAddressZero() external {
-        minter = new TortoiseMinter();
-
+    function test_InitializeRevertsIfShellIsZero() external {
+        TortoiseMinter newMinter = new TortoiseMinter();
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
-        minter.initialize(address(0), owner, 5, ethReward);
+        newMinter.initialize(address(0), address(rewardToken), PLATFORM_FEE, owner);
     }
 
-    function test_TortoiseMinterOwnerAddrCannotInitializeWithAddressZero() external {
-        minter = new TortoiseMinter();
+    function test_InitializeRevertsIfRewardTokenIsZero() external {
+        TortoiseMinter newMinter = new TortoiseMinter();
+        vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
+        newMinter.initialize(address(shell), address(0), PLATFORM_FEE, owner);
+    }
 
+    function test_InitializeRevertsIfOwnerIsZero() external {
+        TortoiseMinter newMinter = new TortoiseMinter();
         vm.expectRevert(abi.encodeWithSignature("OWNER_CANNOT_BE_ZERO_ADDRESS()"));
-        minter.initialize(inProcess, address(0), 5, ethReward);
+        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, address(0));
     }
 
-    function test_TortoiseMinterRewardPercentageCannotBeGreaterThan100() external {
-        minter = new TortoiseMinter();
+    function test_AlreadyInitialized() external {
+        TortoiseMinter newMinter = new TortoiseMinter();
+        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
 
-        vm.expectRevert(abi.encodeWithSignature("InvalidValue()"));
-        minter.initialize(inProcess, owner, 101, ethReward);
+        vm.expectRevert(abi.encodeWithSignature("INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()"));
+        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
     }
 
-    function test_TortoiseMinterContractName() external view {
-        assertEq(minter.contractName(), "ERC20 Minter");
+    // ============ Contract Metadata ============
+
+    function test_ContractName() external view {
+        assertEq(minter.contractName(), "Tortoise Minter");
     }
 
-    function test_TortoiseMinterContractVersion() external view {
+    function test_ContractVersion() external view {
         assertEq(minter.contractVersion(), "2.0.0");
     }
 
-    function test_TortoiseMinterAlreadyInitalized() external {
-        minter = new TortoiseMinter();
-        minter.initialize(inProcess, owner, 5, ethReward);
+    // ============ SetSale ============
 
-        vm.expectRevert(abi.encodeWithSignature("INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()"));
-        minter.initialize(inProcess, owner, 5, ethReward);
-    }
-
-    function test_TortoiseMinterSaleConfigPriceTooLow() external {
+    function test_SaleConfigPriceTooLow() external {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", 10);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
@@ -185,11 +216,9 @@ contract TortoiseMinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_TortoiseMinterRevertIfFundsRecipientAddressZero() external {
+    function test_RevertIfFundsRecipientZero() external {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
-            "https://in-process.xyz/testing/token.json", 1, createReferral
-        );
+        uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", 1);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
 
         bytes memory minterError = abi.encodeWithSignature("AddressZero()");
@@ -213,11 +242,9 @@ contract TortoiseMinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_TortoiseMinterRevertIfCurrencyZero() external {
+    function test_RevertIfCurrencyZero() external {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
-            "https://in-process.xyz/testing/token.json", 1, createReferral
-        );
+        uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", 1);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
 
         bytes memory minterError = abi.encodeWithSignature("AddressZero()");
@@ -241,394 +268,222 @@ contract TortoiseMinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_TortoiseMinterRevertIfCurrencyDoesNotMatchSalesConfigCurrency() external {
+    // ============ Mint ============
+
+    function test_RevertIfCurrencyMismatch() external {
         setUpTargetSale(10_000, fundsRecipient, address(currency), 1, minter);
 
-        vm.deal(tokenRecipient, ethReward);
-
         vm.expectRevert(abi.encodeWithSignature("InvalidCurrency()"));
-        minter.mint{value: ethReward}(
-            tokenRecipient, 1, address(target), 1, 1, makeAddr("0x123"), address(0), ""
-        );
+        minter.mint(tokenRecipient, 1, address(target), 1, 10_000, makeAddr("wrong"), address(0), "");
     }
 
-    function test_TortoiseMinterRequestMintInvalid() external {
+    function test_RevertIfWrongValue() external {
+        setUpTargetSale(10_000, fundsRecipient, address(currency), 1, minter);
+
+        vm.expectRevert(abi.encodeWithSignature("WrongValueSent()"));
+        minter.mint(tokenRecipient, 1, address(target), 1, 9_999, address(currency), address(0), "");
+    }
+
+    function test_RequestMintInvalid() external {
         vm.expectRevert(abi.encodeWithSignature("RequestMintInvalidUseMint()"));
         minter.requestMint(address(0), 1, 1, 1, "");
     }
 
-    function test_TortoiseMinterComputePaidMintRewards() external view {
-        uint256 totalValue = 500_000_000_000_000_000; // 0.5 when converted from wei
-        TortoiseMinter.RewardsSettings memory rewardsSettings =
-            minter.computePaidMintRewards(totalValue);
-
-        assertEq(rewardsSettings.createReferralReward, 142_857_000_000_000_000);
-        assertEq(rewardsSettings.mintReferralReward, 142_857_000_000_000_000);
-        assertEq(rewardsSettings.firstMinterReward, 71_142_500_000_000_000);
-        assertEq(rewardsSettings.inProcessReward, 143_143_500_000_000_000);
-        assertEq(
-            rewardsSettings.createReferralReward + rewardsSettings.mintReferralReward
-                + rewardsSettings.inProcessReward + rewardsSettings.firstMinterReward,
-            totalValue
-        );
-    }
-
-    function test_TortoiseMinterSaleFlow() external {
-        uint96 pricePerToken = 10_000;
+    function test_MintFlow() external {
+        uint256 pricePerToken = 10_000;
         uint256 quantity = 2;
-        uint256 newTokenId =
-            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
-        vm.deal(tokenRecipient, 1 ether);
-        vm.prank(admin);
         uint256 totalValue = pricePerToken * quantity;
-        currency.mint(address(tokenRecipient), totalValue);
+        uint256 totalFee = PLATFORM_FEE * quantity;
 
-        vm.prank(tokenRecipient);
-        currency.approve(address(minter), totalValue);
+        vm.prank(admin);
+        currency.mint(tokenRecipient, totalValue);
+        vm.prank(admin);
+        rewardToken.mint(tokenRecipient, totalFee);
 
-        vm.deal(tokenRecipient, ethReward * quantity);
+        _approveAndMint(address(minter), tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), totalFee);
 
-        vm.startPrank(tokenRecipient);
-        minter.mint{value: ethReward * quantity}(
-            tokenRecipient,
-            quantity,
-            address(target),
-            newTokenId,
-            pricePerToken * quantity,
-            address(currency),
-            mintReferral,
-            ""
-        );
-        vm.stopPrank();
-
+        // NFT minted
         assertEq(target.balanceOf(tokenRecipient, newTokenId), quantity);
-        assertEq(currency.balanceOf(fundsRecipient), 19_000);
-        assertEq(currency.balanceOf(address(inProcess)), 288);
-        assertEq(currency.balanceOf(mintReferral), 285);
-        assertEq(currency.balanceOf(admin), 142);
-        assertEq(currency.balanceOf(createReferral), 285);
-        assertEq(
-            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
-                + currency.balanceOf(mintReferral) + currency.balanceOf(admin)
-                + currency.balanceOf(createReferral),
-            totalValue
-        );
-        assertEq(address(inProcess).balance, ethReward * quantity);
+
+        // Artist receives 100% of sale price + 75% of fee
+        uint256 tortoiseAmount = totalFee * TORTOISE_FEE_BPS / BPS_DENOMINATOR;
+        uint256 artistFeeAmount = totalFee - tortoiseAmount;
+        assertEq(currency.balanceOf(fundsRecipient), totalValue);
+        assertEq(rewardToken.balanceOf(fundsRecipient), artistFeeAmount);
+
+        // TortoiseShell receives 25% of fee
+        assertEq(rewardToken.balanceOf(address(shell)), tortoiseAmount);
+        assertEq(shell.depositedAmount(), tortoiseAmount);
+
+        // Collector gets TORS credit
+        assertEq(shell.creditedUser(), tokenRecipient);
+        assertEq(shell.creditedQuantity(), quantity);
     }
 
-    function test_TortoiseMinterSaleWithRewardsAddresses() external {
-        uint96 pricePerToken = 100_000_000_000_000_000; // 0.1 when converted from wei
-        uint256 quantity = 5;
-        uint256 newTokenId =
-            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+    function test_MintSplit25_75() external {
+        uint256 pricePerToken = 10_000;
+        uint256 quantity = 1;
+        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
-        vm.deal(tokenRecipient, ethReward * quantity);
-        vm.prank(admin);
         uint256 totalValue = pricePerToken * quantity;
-        currency.mint(address(tokenRecipient), totalValue);
+        uint256 totalFee = PLATFORM_FEE * quantity; // 1_000_000
 
-        vm.prank(tokenRecipient);
-        currency.approve(address(minter), totalValue);
+        vm.prank(admin);
+        currency.mint(tokenRecipient, totalValue);
+        vm.prank(admin);
+        rewardToken.mint(tokenRecipient, totalFee);
 
-        vm.startPrank(tokenRecipient);
-        minter.mint{value: ethReward * quantity}(
-            tokenRecipient,
-            quantity,
-            address(target),
-            newTokenId,
-            pricePerToken * quantity,
-            address(currency),
-            mintReferral,
-            ""
-        );
-        vm.stopPrank();
+        _approveAndMint(address(minter), tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), totalFee);
 
-        assertEq(target.balanceOf(tokenRecipient, newTokenId), quantity);
-        assertEq(currency.balanceOf(fundsRecipient), 475_000_000_000_000_000);
-        assertEq(currency.balanceOf(address(inProcess)), 7_157_175_000_000_000);
-        assertEq(currency.balanceOf(createReferral), 7_142_850_000_000_000);
-        assertEq(currency.balanceOf(mintReferral), 7_142_850_000_000_000);
-        assertEq(
-            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
-                + currency.balanceOf(createReferral) + currency.balanceOf(mintReferral)
-                + currency.balanceOf(admin),
-            totalValue
-        );
-        assertEq(address(inProcess).balance, ethReward * quantity);
+        uint256 tortoiseAmount = totalFee * TORTOISE_FEE_BPS / BPS_DENOMINATOR; // 250_000
+        uint256 artistFeeAmount = totalFee - tortoiseAmount;                      // 750_000
+
+        assertEq(rewardToken.balanceOf(address(shell)), tortoiseAmount);
+        assertEq(rewardToken.balanceOf(fundsRecipient), artistFeeAmount);
+        assertEq(tortoiseAmount + artistFeeAmount, totalFee);
     }
 
-    function test_TortoiseMinterSaleFuzz(
-        uint96 pricePerToken,
-        uint256 quantity,
-        uint8 rewardPct,
-        uint256 inProcessEthReward
-    ) external {
-        quantity = bound(quantity, 1, 999_999_999);
-        pricePerToken = uint96(bound(uint256(pricePerToken), 10_001, uint256(type(uint96).max) - 1));
-        rewardPct = uint8(bound(uint256(rewardPct), 1, 99));
-        inProcessEthReward = bound(inProcessEthReward, 1, 1 ether - 1);
+    function test_MintEmitsCollectedEvent() external {
+        uint256 pricePerToken = 10_000;
+        uint256 quantity = 1;
+        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
-        TortoiseMinter newMinter = new TortoiseMinter();
-        newMinter.initialize(address(inProcess), owner, rewardPct, inProcessEthReward);
-
-        uint256 tokenId =
-            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, newMinter);
+        uint256 totalValue = pricePerToken * quantity;
+        uint256 totalFee = PLATFORM_FEE * quantity;
 
         vm.prank(admin);
-        uint256 totalValue = pricePerToken * quantity;
-        currency.mint(address(tokenRecipient), totalValue);
-
-        vm.prank(tokenRecipient);
-        currency.approve(address(newMinter), totalValue);
-
-        uint256 reward = (totalValue * rewardPct) / BPS_TO_PERCENT;
-        uint256 createReferralReward =
-            (reward * CREATE_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 mintReferralReward =
-            (reward * MINT_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 firstMinterReward =
-            (reward * FIRST_MINTER_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 inProcessReward =
-            reward - (createReferralReward + mintReferralReward + firstMinterReward);
+        currency.mint(tokenRecipient, totalValue);
+        vm.prank(admin);
+        rewardToken.mint(tokenRecipient, totalFee);
 
         vm.startPrank(tokenRecipient);
+        currency.approve(address(minter), totalValue);
+        rewardToken.approve(address(minter), totalFee);
+
+        uint256 tortoiseAmount = totalFee * TORTOISE_FEE_BPS / BPS_DENOMINATOR;
+        uint256 artistFeeAmount = totalFee - tortoiseAmount;
+        uint256 torsAwarded = quantity * shell.tortRewardPerCollection();
+
         vm.expectEmit(true, true, true, true);
-        emit ERC20RewardsDeposit(
-            createReferral,
-            mintReferral,
-            address(admin),
-            inProcess,
+        emit Collected(
+            fundsRecipient,
             address(target),
-            address(currency),
-            tokenId,
-            createReferralReward,
-            mintReferralReward,
-            firstMinterReward,
-            inProcessReward
-        );
-        vm.deal(tokenRecipient, inProcessEthReward * quantity);
-
-        uint256 amount = pricePerToken * quantity;
-        newMinter.mint{value: inProcessEthReward * quantity}(
             tokenRecipient,
+            newTokenId,
             quantity,
-            address(target),
-            tokenId,
-            amount,
             address(currency),
-            mintReferral,
-            ""
+            pricePerToken,
+            torsAwarded
         );
+        minter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "");
         vm.stopPrank();
-
-        assertEq(target.balanceOf(tokenRecipient, tokenId), quantity);
-        assertEq(currency.balanceOf(address(inProcess)), inProcessReward);
-        assertEq(currency.balanceOf(createReferral), createReferralReward);
-        assertEq(currency.balanceOf(mintReferral), mintReferralReward);
-        assertEq(currency.balanceOf(admin), firstMinterReward);
-        assertEq(
-            currency.balanceOf(address(inProcess)) + currency.balanceOf(mintReferral)
-                + currency.balanceOf(admin) + currency.balanceOf(createReferral),
-            reward
-        );
-        assertEq(
-            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
-                + currency.balanceOf(createReferral) + currency.balanceOf(mintReferral)
-                + currency.balanceOf(admin),
-            totalValue
-        );
-        assertEq(address(inProcess).balance, inProcessEthReward * quantity);
     }
 
-    function test_TortoiseMinterCreateReferral() public {
-        vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
-            "https://in-process.xyz/testing/token.json", 1, createReferral
-        );
-        target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
-        vm.stopPrank();
+    function test_MintEmitsCommentEvent() external {
+        uint256 pricePerToken = 10_000;
+        uint256 quantity = 1;
+        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
-        address targetCreateReferral = minter.getCreateReferral(address(target), newTokenId);
-        assertEq(targetCreateReferral, createReferral);
-
-        address fallbackCreateReferral = minter.getCreateReferral(address(this), 1);
-        assertEq(fallbackCreateReferral, minterConfig.inProcessRewardRecipientAddress);
-    }
-
-    function test_TortoiseMinterFirstMinterFallback() public {
-        uint256 pricePerToken = 1e18;
-        uint256 quantity = 11;
-        uint256 totalValue = pricePerToken * quantity;
-
-        uint256 tokenId =
-            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
-        address collector = makeAddr("collector");
+        uint256 totalValue = pricePerToken;
+        uint256 totalFee = PLATFORM_FEE;
 
         vm.prank(admin);
-        currency.mint(collector, totalValue);
+        currency.mint(tokenRecipient, totalValue);
+        vm.prank(admin);
+        rewardToken.mint(tokenRecipient, totalFee);
 
-        vm.deal(collector, ethReward * quantity);
-
-        vm.startPrank(collector);
+        vm.startPrank(tokenRecipient);
         currency.approve(address(minter), totalValue);
-        minter.mint{value: ethReward * quantity}(
-            collector,
-            quantity,
-            address(target),
-            tokenId,
-            totalValue,
-            address(currency),
-            address(0),
-            ""
-        );
+        rewardToken.approve(address(minter), totalFee);
+
+        vm.expectEmit(true, true, true, true);
+        emit MintComment(tokenRecipient, address(target), newTokenId, quantity, "hello");
+        minter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "hello");
         vm.stopPrank();
-
-        address firstMinter = minter.getFirstMinter(address(target), tokenId);
-        assertEq(firstMinter, admin);
-
-        address fallbackFirstMinter = minter.getFirstMinter(address(this), 1);
-        assertEq(fallbackFirstMinter, minterConfig.inProcessRewardRecipientAddress);
     }
 
-    function test_TortoiseMinterSetInProcessRewardsRecipient() public {
+    function test_MintSkipsFeeIfShellIsZeroOrFeeIsZero() external {
+        TortoiseMinter zeroFeeMinter = new TortoiseMinter();
+        // platformFee = 0, shell still set
+        zeroFeeMinter.initialize(address(shell), address(rewardToken), 0, owner);
+
+        uint256 pricePerToken = 10_000;
+        uint256 quantity = 1;
+        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, zeroFeeMinter);
+
+        uint256 totalValue = pricePerToken;
+        vm.prank(admin);
+        currency.mint(tokenRecipient, totalValue);
+
+        vm.startPrank(tokenRecipient);
+        currency.approve(address(zeroFeeMinter), totalValue);
+        zeroFeeMinter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "");
+        vm.stopPrank();
+
+        // No fee pulled, artist gets full sale price
+        assertEq(currency.balanceOf(fundsRecipient), totalValue);
+        assertEq(rewardToken.balanceOf(address(shell)), 0);
+    }
+
+    // ============ Config ============
+
+    function test_SetTortoiseMinterConfig() external {
+        MockTortoiseShell newShell = new MockTortoiseShell();
+        MockERC20 newRewardToken = new MockERC20("New USDC", "USDC2");
+
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: address(this),
-            rewardRecipientPercentage: 5,
-            ethReward: ethReward
+            tortoiseShell: address(newShell),
+            rewardToken: address(newRewardToken),
+            platformFee: 2_000_000
         });
         emit TortoiseMinterConfigSet(newConfig);
         minter.setTortoiseMinterConfig(newConfig);
 
-        minterConfig = minter.getTortoiseMinterConfig();
-        assertEq(minterConfig.inProcessRewardRecipientAddress, address(this));
+        ITortoiseMinter.TortoiseMinterConfig memory stored = minter.getTortoiseMinterConfig();
+        assertEq(stored.tortoiseShell, address(newShell));
+        assertEq(stored.rewardToken, address(newRewardToken));
+        assertEq(stored.platformFee, 2_000_000);
     }
 
-    function test_TortoiseMinterOnlyRecipientAddressCanSet() public {
+    function test_OnlyOwnerCanSetConfig() external {
         vm.expectRevert(abi.encodeWithSignature("ONLY_OWNER()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: address(this),
-            rewardRecipientPercentage: 5,
-            ethReward: ethReward
+            tortoiseShell: address(shell),
+            rewardToken: address(rewardToken),
+            platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_TortoiseMinterCannotSetRecipientToZero() public {
+    function test_CannotSetShellToZero() external {
+        vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
-        vm.prank(owner);
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: address(0),
-            rewardRecipientPercentage: 5,
-            ethReward: ethReward
+            tortoiseShell: address(0),
+            rewardToken: address(rewardToken),
+            platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20SetRewardRecipientPercentage(
-        uint256 percentageFuzz
-    ) public {
-        percentageFuzz = bound(percentageFuzz, 1, 99);
-
+    function test_CannotSetRewardTokenToZero() external {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("InvalidValue()"));
+        vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: 101,
-            ethReward: ethReward
+            tortoiseShell: address(shell),
+            rewardToken: address(0),
+            platformFee: PLATFORM_FEE
         });
-        minter.setTortoiseMinterConfig(newConfig);
-
-        vm.prank(owner);
-        vm.expectEmit(true, true, true, true);
-        newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: percentageFuzz,
-            ethReward: ethReward
-        });
-        emit TortoiseMinterConfigSet(newConfig);
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_TortoiseMinterSetEthReward(
-        uint256 ethRewardFuzz
-    ) public {
-        vm.assume(ethRewardFuzz >= 0 ether && ethRewardFuzz < 10 ether);
+    // ============ PremintSale ============
 
-        vm.prank(owner);
-        vm.expectEmit(true, true, true, true);
-        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
-            ethReward: ethRewardFuzz
-        });
-        emit TortoiseMinterConfigSet(newConfig);
-        minter.setTortoiseMinterConfig(newConfig);
-    }
-
-    function test_TortoiseMinterSetOwner() public {
-        vm.prank(inProcess);
-        vm.expectRevert(abi.encodeWithSignature("ONLY_OWNER()"));
-        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
-            ethReward: ethReward
-        });
-        minter.setTortoiseMinterConfig(newConfig);
-
-        vm.prank(owner);
-        vm.expectEmit(true, true, true, true);
-        newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            inProcessRewardRecipientAddress: inProcess,
-            rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
-            ethReward: ethReward
-        });
-        emit TortoiseMinterConfigSet(newConfig);
-        minter.setTortoiseMinterConfig(newConfig);
-    }
-
-    function test_TortoiseMinterEthRewardTooLow(
-        uint256 ethRewardLow
-    ) public {
-        vm.assume(ethRewardLow >= 0 ether && ethRewardLow < 0.000_111 ether);
-
-        uint96 pricePerToken = 10_000;
-        uint256 quantity = 2;
-        uint256 newTokenId =
-            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
-
-        vm.deal(tokenRecipient, 1 ether);
-        vm.prank(admin);
-        uint256 totalValue = pricePerToken * quantity;
-        currency.mint(address(tokenRecipient), totalValue);
-
-        vm.prank(tokenRecipient);
-        currency.approve(address(minter), totalValue);
-
-        vm.deal(tokenRecipient, ethRewardLow);
-
-        vm.startPrank(tokenRecipient);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITortoiseMinter.InvalidETHValue.selector, 0.000_111 ether * quantity, ethRewardLow
-            )
-        );
-        minter.mint{value: ethRewardLow}(
-            tokenRecipient,
-            quantity,
-            address(target),
-            newTokenId,
-            pricePerToken * quantity,
-            address(currency),
-            mintReferral,
-            ""
-        );
-        vm.stopPrank();
-    }
-
-    function test_TortoiseMinterSetPremintSale() public {
+    function test_SetPremintSale() external {
         ITortoiseMinter.PremintSalesConfig memory newConfig = ITortoiseMinter.PremintSalesConfig({
             duration: 3000,
             maxTokensPerAddress: 200,

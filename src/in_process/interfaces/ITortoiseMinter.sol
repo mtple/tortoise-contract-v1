@@ -4,17 +4,6 @@ pragma solidity ^0.8.17;
 import {IMinterPremintSetup} from "./IMinterPremintSetup.sol";
 
 interface ITortoiseMinter is IMinterPremintSetup {
-    struct RewardsSettings {
-        /// @notice Amount of the create referral reward
-        uint256 createReferralReward;
-        /// @notice Amount of the mint referral reward
-        uint256 mintReferralReward;
-        /// @notice Amount of the InProcess protocol reward
-        uint256 inProcessReward;
-        /// @notice Amount of the first minter reward
-        uint256 firstMinterReward;
-    }
-
     struct SalesConfig {
         /// @notice Unix timestamp for the sale start
         uint64 saleStart;
@@ -44,38 +33,31 @@ interface ITortoiseMinter is IMinterPremintSetup {
     }
 
     struct TortoiseMinterConfig {
-        /// @notice The address of the InProcess rewards recipient
-        address inProcessRewardRecipientAddress;
-        /// @notice The reward recipient percentage
-        uint256 rewardRecipientPercentage;
-        /// @notice The ETH reward amount
-        uint256 ethReward;
+        /// @notice TortoiseShell contract address
+        address tortoiseShell;
+        /// @notice ERC20 token used for Tortoise platform fee (e.g. USDC)
+        address rewardToken;
+        /// @notice Platform fee amount per mint in rewardToken units
+        uint256 platformFee;
     }
 
-    /// @notice Rewards Deposit Event
-    /// @param createReferral Creator referral address
-    /// @param mintReferral Mint referral address
-    /// @param firstMinter First minter address
-    /// @param inProcess InProcess recipient address
-    /// @param collection The collection address of the token
-    /// @param currency Currency used for the deposit
+    /// @notice Emitted on every successful mint through TortoiseMinter
+    /// @param collector Address that receives the NFT
+    /// @param collection InProcess 1155 collection address
+    /// @param artist Artist (fundsRecipient) address
     /// @param tokenId Token ID
-    /// @param createReferralReward Creator referral reward
-    /// @param mintReferralReward Mint referral amount
-    /// @param firstMinterReward First minter amount
-    /// @param inProcessReward InProcess reward amount
-    event ERC20RewardsDeposit(
-        address indexed createReferral,
-        address indexed mintReferral,
-        address indexed firstMinter,
-        address inProcess,
-        address collection,
-        address currency,
+    /// @param quantity Number of tokens minted
+    /// @param currency ERC20 token used for the NFT sale price
+    /// @param price Price per token (currency)
+    event Collected(
+        address indexed artist,
+        address indexed collection,
+        address indexed collector,
         uint256 tokenId,
-        uint256 createReferralReward,
-        uint256 mintReferralReward,
-        uint256 firstMinterReward,
-        uint256 inProcessReward
+        uint256 quantity,
+        address currency,
+        uint256 price,
+        uint256 torsAwarded
     );
 
     /// @notice MintComment Event
@@ -126,21 +108,13 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// @notice ERC20 transfer slippage
     error ERC20TransferSlippage();
 
-    /// @notice Failed to send ETH reward
-    error FailedToSendEthReward();
-
-    /// @notice Invalid value for ETH reward
-    /// @param expectedValue The expected value
-    /// @param actualValue The actual value
-    error InvalidETHValue(uint256 expectedValue, uint256 actualValue);
-
     /// @notice Invalid value
     error InvalidValue();
 
     /// @notice Mints a token using an ERC20 currency, note the total value must have been approved prior to calling this function
     /// @param mintTo The address to mint the token to
     /// @param quantity The quantity of tokens to mint
-    /// @param tokenAddress The address of the token to mint
+    /// @param collection The address of the token to mint
     /// @param tokenId The ID of the token to mint
     /// @param totalValue The total value of the mint
     /// @param currency The address of the currency to use for the mint
@@ -149,13 +123,13 @@ interface ITortoiseMinter is IMinterPremintSetup {
     function mint(
         address mintTo,
         uint256 quantity,
-        address tokenAddress,
+        address collection,
         uint256 tokenId,
         uint256 totalValue,
         address currency,
         address mintReferral,
         string calldata comment
-    ) external payable;
+    ) external;
 
     /// @notice Sets the sale config for a given token
     /// @param tokenId The ID of the token to set the sale config for
@@ -179,12 +153,6 @@ interface ITortoiseMinter is IMinterPremintSetup {
         address tokenContract,
         uint256 tokenId
     ) external view returns (SalesConfig memory);
-
-    /// @notice Returns the reward recipient percentage
-    function totalRewardPct() external view returns (uint256);
-
-    /// @notice Returns the ETH reward amount
-    function ethRewardAmount() external view returns (uint256);
 
     /// @notice Sets the TortoiseMinterConfig
     /// @param config The TortoiseMinterConfig to set
