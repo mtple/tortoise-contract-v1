@@ -7,6 +7,8 @@ contract Config is Script {
     address constant USDC_BASE = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     address constant TORT_BASE = 0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6;
+    // TORSTest deployed by DeployBaseSepolia.s.sol on 2026-05-14
+    address constant TORS_TEST_BASE_SEPOLIA = 0x4D1Ad896E74f5EE1AA607DE32795F408dbbC12d4;
 
     function getUsdcAddress() internal view returns (address) {
         if (block.chainid == 8453) {
@@ -21,6 +23,10 @@ contract Config is Script {
     function getTortAddress() internal view returns (address) {
         if (block.chainid == 8453) {
             return TORT_BASE;
+        }
+        if (block.chainid == 84_532) {
+            require(TORS_TEST_BASE_SEPOLIA != address(0), "TORSTest not yet deployed - run DeployBaseSepolia");
+            return TORS_TEST_BASE_SEPOLIA;
         }
         revert("TORT address not configured for this chain");
     }
