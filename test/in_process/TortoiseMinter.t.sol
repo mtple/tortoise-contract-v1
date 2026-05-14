@@ -364,10 +364,10 @@ contract TortoiseMinterTest is Test {
         uint8 rewardPct,
         uint256 inProcessEthReward
     ) external {
-        vm.assume(quantity > 0 && quantity < 1_000_000_000);
-        vm.assume(pricePerToken > 10_000 && pricePerToken < type(uint96).max);
-        vm.assume(rewardPct > 0 && rewardPct < 100);
-        vm.assume(inProcessEthReward > 0 ether && inProcessEthReward < 1 ether);
+        quantity = bound(quantity, 1, 999_999_999);
+        pricePerToken = uint96(bound(uint256(pricePerToken), 10_001, uint256(type(uint96).max) - 1));
+        rewardPct = uint8(bound(uint256(rewardPct), 1, 99));
+        inProcessEthReward = bound(inProcessEthReward, 1, 1 ether - 1);
 
         TortoiseMinter newMinter = new TortoiseMinter();
         newMinter.initialize(address(inProcess), owner, rewardPct, inProcessEthReward);
@@ -530,7 +530,7 @@ contract TortoiseMinterTest is Test {
     function test_ERC20SetRewardRecipientPercentage(
         uint256 percentageFuzz
     ) public {
-        vm.assume(percentageFuzz > 0 && percentageFuzz < 100);
+        percentageFuzz = bound(percentageFuzz, 1, 99);
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("InvalidValue()"));
