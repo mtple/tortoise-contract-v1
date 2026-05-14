@@ -18,6 +18,13 @@ contract MockTortoiseShell {
     address public creditedUser;
     uint256 public tortRewardPerCollection = 1e18;
     uint256 public tortPoolBalance = 1000e18;
+    IERC20 public rewardToken;
+
+    function setRewardToken(
+        address token
+    ) external {
+        rewardToken = IERC20(token);
+    }
 
     function depositRewards(
         uint256 amount
@@ -87,8 +94,10 @@ contract TortoiseMinterTest is Test {
         currency = new MockERC20("Sale Currency", "SALE");
         rewardToken = new MockERC20("Reward Token", "USDC");
 
+        shell.setRewardToken(address(rewardToken));
+
         minter = new TortoiseMinter();
-        minter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
+        minter.initialize(address(shell), PLATFORM_FEE, owner);
         minterConfig = minter.getTortoiseMinterConfig();
     }
 
@@ -148,40 +157,32 @@ contract TortoiseMinterTest is Test {
     function test_InitializeEmitsEvent() external {
         vm.expectEmit(true, true, true, true);
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(shell),
-            rewardToken: address(rewardToken),
-            platformFee: PLATFORM_FEE
+            tortoiseShell: address(shell), platformFee: PLATFORM_FEE
         });
         emit TortoiseMinterConfigSet(newConfig);
 
         TortoiseMinter newMinter = new TortoiseMinter();
-        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
+        newMinter.initialize(address(shell), PLATFORM_FEE, owner);
     }
 
     function test_InitializeRevertsIfShellIsZero() external {
         TortoiseMinter newMinter = new TortoiseMinter();
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
-        newMinter.initialize(address(0), address(rewardToken), PLATFORM_FEE, owner);
-    }
-
-    function test_InitializeRevertsIfRewardTokenIsZero() external {
-        TortoiseMinter newMinter = new TortoiseMinter();
-        vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
-        newMinter.initialize(address(shell), address(0), PLATFORM_FEE, owner);
+        newMinter.initialize(address(0), PLATFORM_FEE, owner);
     }
 
     function test_InitializeRevertsIfOwnerIsZero() external {
         TortoiseMinter newMinter = new TortoiseMinter();
         vm.expectRevert(abi.encodeWithSignature("OWNER_CANNOT_BE_ZERO_ADDRESS()"));
-        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, address(0));
+        newMinter.initialize(address(shell), PLATFORM_FEE, address(0));
     }
 
     function test_AlreadyInitialized() external {
         TortoiseMinter newMinter = new TortoiseMinter();
-        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
+        newMinter.initialize(address(shell), PLATFORM_FEE, owner);
 
         vm.expectRevert(abi.encodeWithSignature("INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()"));
-        newMinter.initialize(address(shell), address(rewardToken), PLATFORM_FEE, owner);
+        newMinter.initialize(address(shell), PLATFORM_FEE, owner);
     }
 
     // ============ Contract Metadata ============
@@ -448,7 +449,7 @@ contract TortoiseMinterTest is Test {
     function test_MintSkipsFeeIfShellIsZeroOrFeeIsZero() external {
         TortoiseMinter zeroFeeMinter = new TortoiseMinter();
         // platformFee = 0, shell still set
-        zeroFeeMinter.initialize(address(shell), address(rewardToken), 0, owner);
+        zeroFeeMinter.initialize(address(shell), 0, owner);
 
         uint256 pricePerToken = 10_000;
         uint256 quantity = 1;
@@ -483,30 +484,24 @@ contract TortoiseMinterTest is Test {
 
     function test_SetTortoiseMinterConfig() external {
         MockTortoiseShell newShell = new MockTortoiseShell();
-        MockERC20 newRewardToken = new MockERC20("New USDC", "USDC2");
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(newShell),
-            rewardToken: address(newRewardToken),
-            platformFee: 2_000_000
+            tortoiseShell: address(newShell), platformFee: 2_000_000
         });
         emit TortoiseMinterConfigSet(newConfig);
         minter.setTortoiseMinterConfig(newConfig);
 
         ITortoiseMinter.TortoiseMinterConfig memory stored = minter.getTortoiseMinterConfig();
         assertEq(stored.tortoiseShell, address(newShell));
-        assertEq(stored.rewardToken, address(newRewardToken));
         assertEq(stored.platformFee, 2_000_000);
     }
 
     function test_OnlyOwnerCanSetConfig() external {
         vm.expectRevert(abi.encodeWithSignature("ONLY_OWNER()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(shell),
-            rewardToken: address(rewardToken),
-            platformFee: PLATFORM_FEE
+            tortoiseShell: address(shell), platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }
@@ -515,16 +510,7 @@ contract TortoiseMinterTest is Test {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(0), rewardToken: address(rewardToken), platformFee: PLATFORM_FEE
-        });
-        minter.setTortoiseMinterConfig(newConfig);
-    }
-
-    function test_CannotSetRewardTokenToZero() external {
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
-        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(shell), rewardToken: address(0), platformFee: PLATFORM_FEE
+            tortoiseShell: address(0), platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }

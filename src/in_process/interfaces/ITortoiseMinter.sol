@@ -35,9 +35,7 @@ interface ITortoiseMinter is IMinterPremintSetup {
     struct TortoiseMinterConfig {
         /// @notice TortoiseShell contract address
         address tortoiseShell;
-        /// @notice ERC20 token used for Tortoise platform fee (e.g. USDC)
-        address rewardToken;
-        /// @notice Platform fee amount per mint in rewardToken units
+        /// @notice Platform fee amount per mint in TortoiseShell.rewardToken units
         uint256 platformFee;
     }
 

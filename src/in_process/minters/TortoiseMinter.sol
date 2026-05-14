@@ -42,15 +42,12 @@ contract TortoiseMinter is
     /// @dev Allows deterministic contract address, called on deploy
     function initialize(
         address _tortoiseShell,
-        address _rewardToken,
         uint256 _platformFee,
         address _owner
     ) external initializer {
         __Ownable_init(_owner);
         _setTortoiseMinterConfig(
-            TortoiseMinterConfig({
-                tortoiseShell: _tortoiseShell, rewardToken: _rewardToken, platformFee: _platformFee
-            })
+            TortoiseMinterConfig({tortoiseShell: _tortoiseShell, platformFee: _platformFee})
         );
     }
 
@@ -87,7 +84,7 @@ contract TortoiseMinter is
         uint256 artistFeeAmount = totalFee - tortoiseAmount;
 
         address shell = minterConfig.tortoiseShell;
-        address token = minterConfig.rewardToken;
+        address token = address(ITortoiseShell(shell).rewardToken());
 
         IERC20(token).safeTransfer(shell, tortoiseAmount);
         ITortoiseShell(shell).depositRewards(tortoiseAmount);
@@ -148,7 +145,9 @@ contract TortoiseMinter is
         // Pull all payments before any external calls
         _handleIncomingTransfer(currency, totalValue);
         if (totalFee > 0) {
-            _handleIncomingTransfer(minterConfig.rewardToken, totalFee);
+            _handleIncomingTransfer(
+                address(ITortoiseShell(minterConfig.tortoiseShell).rewardToken()), totalFee
+            );
         }
 
         // Distribute: pay artist and split platform fee
@@ -291,7 +290,6 @@ contract TortoiseMinter is
         TortoiseMinterConfig memory _config
     ) internal {
         _requireNotAddressZero(_config.tortoiseShell);
-        _requireNotAddressZero(_config.rewardToken);
 
         minterConfig = _config;
         emit TortoiseMinterConfigSet(_config);
