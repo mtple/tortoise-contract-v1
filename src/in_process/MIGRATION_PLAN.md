@@ -510,7 +510,7 @@ Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 - `LimitedMintPerAddress.sol` — fix pragma + fix import path
 - `SaleStrategy.sol` — fix pragma + fix all import paths
 
-### Step 6 — Copy and fix interfaces
+### ✅ Step 6 — Copy and fix interfaces
 - `IContractMetadata.sol` — no changes
 - `IMinterPremintSetup.sol` — no changes
 - `ILimitedMintPerAddress.sol` — fix @zoralabs import paths to local
