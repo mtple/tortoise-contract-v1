@@ -133,11 +133,11 @@ contract ERC20MinterTest is Test {
         minter.initialize(inProcess, owner, 101, ethReward);
     }
 
-    function test_ERC20MinterContractName() external {
+    function test_ERC20MinterContractName() external view {
         assertEq(minter.contractName(), "ERC20 Minter");
     }
 
-    function test_ERC20MinterContractVersion() external {
+    function test_ERC20MinterContractVersion() external view {
         assertEq(minter.contractVersion(), "2.0.0");
     }
 
@@ -241,7 +241,7 @@ contract ERC20MinterTest is Test {
         minter.requestMint(address(0), 1, 1, 1, "");
     }
 
-    function test_ERC20MinterComputePaidMintRewards() external {
+    function test_ERC20MinterComputePaidMintRewards() external view {
         uint256 totalValue = 500000000000000000; // 0.5 when converted from wei
         ERC20Minter.RewardsSettings memory rewardsSettings = minter.computePaidMintRewards(totalValue);
 
