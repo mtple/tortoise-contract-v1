@@ -198,6 +198,7 @@ contract TortoiseMinter is
 
         salesConfigs[msg.sender][tokenId] = salesConfig;
 
+        // Emit event
         emit SaleSet(msg.sender, tokenId, salesConfig);
     }
 
@@ -242,6 +243,7 @@ contract TortoiseMinter is
     ) external override {
         delete salesConfigs[msg.sender][tokenId];
 
+        // Deleted sale emit event
         emit SaleSet(msg.sender, tokenId, salesConfigs[msg.sender][tokenId]);
     }
 
