@@ -481,7 +481,7 @@ ERC20Minter.sol
 
 Execute in this exact order:
 
-### Step 1 — Vendor the shared-contracts interfaces
+### ✅ Step 1 — Vendor the shared-contracts interfaces
 Copy from `in-process-protocol/packages/shared-contracts/src/interfaces/`:
 - `IERC165Upgradeable.sol` → `src/in_process/interfaces/shared/`
 - `ICreatorCommands.sol` → `src/in_process/interfaces/shared/`
