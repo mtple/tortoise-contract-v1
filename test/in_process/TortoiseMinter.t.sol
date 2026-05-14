@@ -53,12 +53,10 @@ contract TortoiseMinterTest is Test {
 
     event Collected(
         address indexed artist,
-        address indexed collectionAddress,
         address indexed collector,
+        address indexed collection,
         uint256 tokenId,
         uint256 quantity,
-        address currency,
-        uint256 price,
         uint256 torsAwarded
     );
 
@@ -369,12 +367,10 @@ contract TortoiseMinterTest is Test {
         vm.expectEmit(true, true, true, true);
         emit Collected(
             fundsRecipient,
-            address(target),
             tokenRecipient,
+            address(target),
             newTokenId,
             quantity,
-            address(currency),
-            pricePerToken,
             torsAwarded
         );
         minter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "");

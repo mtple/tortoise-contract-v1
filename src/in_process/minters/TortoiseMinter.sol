@@ -104,7 +104,7 @@ contract TortoiseMinter is
     /// @notice Mints a token using an ERC20 currency, note the total value must have been approved prior to calling this function
     /// @param mintTo The address to mint the token to
     /// @param quantity The quantity of tokens to mint
-    /// @param collection The address of the token to mint
+    /// @param tokenAddress The address of the collection to mint
     /// @param tokenId The ID of the token to mint
     /// @param totalValue The total value of the mint
     /// @param currency The address of the currency to use for the mint
@@ -113,14 +113,14 @@ contract TortoiseMinter is
     function mint(
         address mintTo,
         uint256 quantity,
-        address collection,
+        address tokenAddress,
         uint256 tokenId,
         uint256 totalValue,
         address currency,
         address mintReferral,
         string calldata comment
     ) external nonReentrant {
-        SalesConfig storage config = salesConfigs[collection][tokenId];
+        SalesConfig storage config = salesConfigs[tokenAddress][tokenId];
 
         if (config.currency == address(0) || config.currency != currency) {
             revert InvalidCurrency();
@@ -140,13 +140,13 @@ contract TortoiseMinter is
 
         if (config.maxTokensPerAddress > 0) {
             _requireMintNotOverLimitAndUpdate(
-                config.maxTokensPerAddress, quantity, collection, tokenId, mintTo
+                config.maxTokensPerAddress, quantity, tokenAddress, tokenId, mintTo
             );
         }
 
         // Pull sale payment and send to artist
         _handleIncomingTransfer(currency, totalValue);
-        IInProcess1155(collection).adminMint(mintTo, tokenId, quantity, "");
+        IInProcess1155(tokenAddress).adminMint(mintTo, tokenId, quantity, "");
         IERC20(currency).safeTransfer(config.fundsRecipient, totalValue);
 
         // Pull Tortoise platform fee and distribute 25/75
@@ -160,17 +160,15 @@ contract TortoiseMinter is
         }
 
         if (bytes(comment).length > 0) {
-            emit MintComment(mintTo, collection, tokenId, quantity, comment);
+            emit MintComment(mintTo, tokenAddress, tokenId, quantity, comment);
         }
 
         emit Collected(
             config.fundsRecipient,
-            collection,
             mintTo,
+            tokenAddress,
             tokenId,
             quantity,
-            currency,
-            config.pricePerToken,
             torsAwarded
         );
     }

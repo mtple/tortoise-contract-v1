@@ -42,21 +42,18 @@ interface ITortoiseMinter is IMinterPremintSetup {
     }
 
     /// @notice Emitted on every successful mint through TortoiseMinter
+    /// @param artist Artist (fundsRecipient) address
     /// @param collector Address that receives the NFT
     /// @param collection InProcess 1155 collection address
-    /// @param artist Artist (fundsRecipient) address
     /// @param tokenId Token ID
     /// @param quantity Number of tokens minted
-    /// @param currency ERC20 token used for the NFT sale price
-    /// @param price Price per token (currency)
+    /// @param torsAwarded TORS tokens credited to the collector
     event Collected(
         address indexed artist,
-        address indexed collection,
         address indexed collector,
+        address indexed collection,
         uint256 tokenId,
         uint256 quantity,
-        address currency,
-        uint256 price,
         uint256 torsAwarded
     );
 
@@ -114,7 +111,7 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// @notice Mints a token using an ERC20 currency, note the total value must have been approved prior to calling this function
     /// @param mintTo The address to mint the token to
     /// @param quantity The quantity of tokens to mint
-    /// @param collection The address of the token to mint
+    /// @param tokenAddress The address of the collection to mint
     /// @param tokenId The ID of the token to mint
     /// @param totalValue The total value of the mint
     /// @param currency The address of the currency to use for the mint
@@ -123,7 +120,7 @@ interface ITortoiseMinter is IMinterPremintSetup {
     function mint(
         address mintTo,
         uint256 quantity,
-        address collection,
+        address tokenAddress,
         uint256 tokenId,
         uint256 totalValue,
         address currency,
