@@ -499,7 +499,7 @@ Create `src/in_process/utils/ownable/Initializable.sol` from scratch.
 Must define `error INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()`.
 Modifiers needed: `initializer`, `onlyInitializing`.
 
-### Step 4 — Copy and fix ownable utilities
+### ✅ Step 4 — Copy and fix ownable utilities
 Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 - `IOwnable2StepUpgradeable.sol` — fix pragma
 - `IOwnable2StepStorageV1.sol` — fix pragma
