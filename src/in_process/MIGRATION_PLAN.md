@@ -527,7 +527,7 @@ Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 Create `test/in_process/mocks/MockInProcess1155.sol` and `MockERC20.sol`.
 MockInProcess1155 implements IInProcess1155 (our renamed interface).
 
-### Step 9 — Write the migrated test file
+### ✅ Step 9 — Write the migrated test file
 Create `test/in_process/ERC20Minter.t.sol` with all original test functions intact,
 using MockInProcess1155 and MockERC20 instead of the real Zora infrastructure,
 and applying all Zora → InProcess renames from the renaming table above.
