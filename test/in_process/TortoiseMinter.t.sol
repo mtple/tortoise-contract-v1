@@ -6,11 +6,11 @@ import {MockInProcess1155} from "./mocks/MockInProcess1155.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {IMinter1155} from "../../src/in_process/interfaces/IMinter1155.sol";
 import {ILimitedMintPerAddressErrors} from "../../src/in_process/interfaces/ILimitedMintPerAddress.sol";
-import {ERC20Minter} from "../../src/in_process/minters/erc20/ERC20Minter.sol";
-import {IERC20Minter} from "../../src/in_process/interfaces/IERC20Minter.sol";
+import {TortoiseMinter} from "../../src/in_process/minters/erc20/TortoiseMinter.sol";
+import {ITortoiseMinter} from "../../src/in_process/interfaces/ITortoiseMinter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract ERC20MinterTest is Test {
+contract TortoiseMinterTest is Test {
     MockInProcess1155 internal target;
     MockERC20 currency;
     address payable internal admin = payable(address(0x999));
@@ -20,8 +20,8 @@ contract ERC20MinterTest is Test {
     address internal createReferral;
     address internal mintReferral;
     address internal owner;
-    ERC20Minter internal minter;
-    IERC20Minter.ERC20MinterConfig internal minterConfig;
+    TortoiseMinter internal minter;
+    ITortoiseMinter.TortoiseMinterConfig internal minterConfig;
 
     uint256 internal constant TOTAL_REWARD_PCT = 5;
     uint256 immutable BPS_TO_PERCENT = 100;
@@ -46,7 +46,7 @@ contract ERC20MinterTest is Test {
         uint256 inProcessReward
     );
 
-    event ERC20MinterConfigSet(IERC20Minter.ERC20MinterConfig config);
+    event TortoiseMinterConfigSet(ITortoiseMinter.TortoiseMinterConfig config);
 
     event OwnerSet(address indexed prevOwner, address indexed owner);
 
@@ -61,11 +61,11 @@ contract ERC20MinterTest is Test {
         owner = makeAddr("owner");
 
         target = new MockInProcess1155();
-        minter = new ERC20Minter();
+        minter = new TortoiseMinter();
         minter.initialize(inProcess, owner, 5, ethReward);
         vm.prank(admin);
         currency = new MockERC20("Test currency", "TEST");
-        minterConfig = minter.getERC20MinterConfig();
+        minterConfig = minter.getTortoiseMinterConfig();
     }
 
     function setUpTargetSale(
@@ -73,7 +73,7 @@ contract ERC20MinterTest is Test {
         address tokenFundsRecipient,
         address tokenCurrency,
         uint256 quantity,
-        ERC20Minter minterContract
+        TortoiseMinter minterContract
     ) internal returns (uint256) {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", quantity, createReferral);
@@ -82,9 +82,9 @@ contract ERC20MinterTest is Test {
             newTokenId,
             address(minterContract),
             abi.encodeWithSelector(
-                ERC20Minter.setSale.selector,
+                TortoiseMinter.setSale.selector,
                 newTokenId,
-                IERC20Minter.SalesConfig({
+                ITortoiseMinter.SalesConfig({
                     pricePerToken: price,
                     saleStart: 0,
                     saleEnd: type(uint64).max,
@@ -99,57 +99,57 @@ contract ERC20MinterTest is Test {
         return newTokenId;
     }
 
-    function test_ERC20MinterInitializeEventIsEmitted() external {
+    function test_TortoiseMinterInitializeEventIsEmitted() external {
         vm.expectEmit(true, true, true, true);
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: inProcess,
             rewardRecipientPercentage: 5,
             ethReward: ethReward
         });
-        emit ERC20MinterConfigSet(newConfig);
+        emit TortoiseMinterConfigSet(newConfig);
 
-        minter = new ERC20Minter();
+        minter = new TortoiseMinter();
         minter.initialize(inProcess, owner, 5, ethReward);
     }
 
-    function test_ERC20MinterInProcessAddrCannotInitializeWithAddressZero() external {
-        minter = new ERC20Minter();
+    function test_TortoiseMinterInProcessAddrCannotInitializeWithAddressZero() external {
+        minter = new TortoiseMinter();
 
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         minter.initialize(address(0), owner, 5, ethReward);
     }
 
-    function test_ERC20MinterOwnerAddrCannotInitializeWithAddressZero() external {
-        minter = new ERC20Minter();
+    function test_TortoiseMinterOwnerAddrCannotInitializeWithAddressZero() external {
+        minter = new TortoiseMinter();
 
         vm.expectRevert(abi.encodeWithSignature("OWNER_CANNOT_BE_ZERO_ADDRESS()"));
         minter.initialize(inProcess, address(0), 5, ethReward);
     }
 
-    function test_ERC20MinterRewardPercentageCannotBeGreaterThan100() external {
-        minter = new ERC20Minter();
+    function test_TortoiseMinterRewardPercentageCannotBeGreaterThan100() external {
+        minter = new TortoiseMinter();
 
         vm.expectRevert(abi.encodeWithSignature("InvalidValue()"));
         minter.initialize(inProcess, owner, 101, ethReward);
     }
 
-    function test_ERC20MinterContractName() external view {
+    function test_TortoiseMinterContractName() external view {
         assertEq(minter.contractName(), "ERC20 Minter");
     }
 
-    function test_ERC20MinterContractVersion() external view {
+    function test_TortoiseMinterContractVersion() external view {
         assertEq(minter.contractVersion(), "2.0.0");
     }
 
-    function test_ERC20MinterAlreadyInitalized() external {
-        minter = new ERC20Minter();
+    function test_TortoiseMinterAlreadyInitalized() external {
+        minter = new TortoiseMinter();
         minter.initialize(inProcess, owner, 5, ethReward);
 
         vm.expectRevert(abi.encodeWithSignature("INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()"));
         minter.initialize(inProcess, owner, 5, ethReward);
     }
 
-    function test_ERC20MinterSaleConfigPriceTooLow() external {
+    function test_TortoiseMinterSaleConfigPriceTooLow() external {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", 10);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
@@ -160,9 +160,9 @@ contract ERC20MinterTest is Test {
             newTokenId,
             address(minter),
             abi.encodeWithSelector(
-                ERC20Minter.setSale.selector,
+                TortoiseMinter.setSale.selector,
                 newTokenId,
-                IERC20Minter.SalesConfig({
+                ITortoiseMinter.SalesConfig({
                     pricePerToken: 1,
                     saleStart: 0,
                     saleEnd: type(uint64).max,
@@ -175,7 +175,7 @@ contract ERC20MinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_ERC20MinterRevertIfFundsRecipientAddressZero() external {
+    function test_TortoiseMinterRevertIfFundsRecipientAddressZero() external {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
@@ -186,9 +186,9 @@ contract ERC20MinterTest is Test {
             newTokenId,
             address(minter),
             abi.encodeWithSelector(
-                ERC20Minter.setSale.selector,
+                TortoiseMinter.setSale.selector,
                 newTokenId,
-                IERC20Minter.SalesConfig({
+                ITortoiseMinter.SalesConfig({
                     pricePerToken: 10_000,
                     saleStart: 0,
                     saleEnd: type(uint64).max,
@@ -201,7 +201,7 @@ contract ERC20MinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_ERC20MinterRevertIfCurrencyZero() external {
+    function test_TortoiseMinterRevertIfCurrencyZero() external {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
@@ -212,9 +212,9 @@ contract ERC20MinterTest is Test {
             newTokenId,
             address(minter),
             abi.encodeWithSelector(
-                ERC20Minter.setSale.selector,
+                TortoiseMinter.setSale.selector,
                 newTokenId,
-                IERC20Minter.SalesConfig({
+                ITortoiseMinter.SalesConfig({
                     pricePerToken: 10_000,
                     saleStart: 0,
                     saleEnd: type(uint64).max,
@@ -227,7 +227,7 @@ contract ERC20MinterTest is Test {
         vm.stopPrank();
     }
 
-    function test_ERC20MinterRevertIfCurrencyDoesNotMatchSalesConfigCurrency() external {
+    function test_TortoiseMinterRevertIfCurrencyDoesNotMatchSalesConfigCurrency() external {
         setUpTargetSale(10_000, fundsRecipient, address(currency), 1, minter);
 
         vm.deal(tokenRecipient, ethReward);
@@ -236,14 +236,14 @@ contract ERC20MinterTest is Test {
         minter.mint{value: ethReward}(tokenRecipient, 1, address(target), 1, 1, makeAddr("0x123"), address(0), "");
     }
 
-    function test_ERC20MinterRequestMintInvalid() external {
+    function test_TortoiseMinterRequestMintInvalid() external {
         vm.expectRevert(abi.encodeWithSignature("RequestMintInvalidUseMint()"));
         minter.requestMint(address(0), 1, 1, 1, "");
     }
 
-    function test_ERC20MinterComputePaidMintRewards() external view {
+    function test_TortoiseMinterComputePaidMintRewards() external view {
         uint256 totalValue = 500000000000000000; // 0.5 when converted from wei
-        ERC20Minter.RewardsSettings memory rewardsSettings = minter.computePaidMintRewards(totalValue);
+        TortoiseMinter.RewardsSettings memory rewardsSettings = minter.computePaidMintRewards(totalValue);
 
         assertEq(rewardsSettings.createReferralReward, 142857000000000000);
         assertEq(rewardsSettings.mintReferralReward, 142857000000000000);
@@ -255,7 +255,7 @@ contract ERC20MinterTest is Test {
         );
     }
 
-    function test_ERC20MinterSaleFlow() external {
+    function test_TortoiseMinterSaleFlow() external {
         uint96 pricePerToken = 10_000;
         uint256 quantity = 2;
         uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
@@ -300,7 +300,7 @@ contract ERC20MinterTest is Test {
         assertEq(address(inProcess).balance, ethReward * quantity);
     }
 
-    function test_ERC20MinterSaleWithRewardsAddresses() external {
+    function test_TortoiseMinterSaleWithRewardsAddresses() external {
         uint96 pricePerToken = 100000000000000000; // 0.1 when converted from wei
         uint256 quantity = 5;
         uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
@@ -342,13 +342,13 @@ contract ERC20MinterTest is Test {
         assertEq(address(inProcess).balance, ethReward * quantity);
     }
 
-    function test_ERC20MinterSaleFuzz(uint96 pricePerToken, uint256 quantity, uint8 rewardPct, uint256 inProcessEthReward) external {
+    function test_TortoiseMinterSaleFuzz(uint96 pricePerToken, uint256 quantity, uint8 rewardPct, uint256 inProcessEthReward) external {
         vm.assume(quantity > 0 && quantity < 1_000_000_000);
         vm.assume(pricePerToken > 10_000 && pricePerToken < type(uint96).max);
         vm.assume(rewardPct > 0 && rewardPct < 100);
         vm.assume(inProcessEthReward > 0 ether && inProcessEthReward < 1 ether);
 
-        ERC20Minter newMinter = new ERC20Minter();
+        TortoiseMinter newMinter = new TortoiseMinter();
         newMinter.initialize(address(inProcess), owner, rewardPct, inProcessEthReward);
 
         uint256 tokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, newMinter);
@@ -404,7 +404,7 @@ contract ERC20MinterTest is Test {
         assertEq(address(inProcess).balance, inProcessEthReward * quantity);
     }
 
-    function test_ERC20MinterCreateReferral() public {
+    function test_TortoiseMinterCreateReferral() public {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
@@ -417,7 +417,7 @@ contract ERC20MinterTest is Test {
         assertEq(fallbackCreateReferral, minterConfig.inProcessRewardRecipientAddress);
     }
 
-    function test_ERC20MinterFirstMinterFallback() public {
+    function test_TortoiseMinterFirstMinterFallback() public {
         uint256 pricePerToken = 1e18;
         uint256 quantity = 11;
         uint256 totalValue = pricePerToken * quantity;
@@ -442,40 +442,40 @@ contract ERC20MinterTest is Test {
         assertEq(fallbackFirstMinter, minterConfig.inProcessRewardRecipientAddress);
     }
 
-    function test_ERC20MinterSetInProcessRewardsRecipient() public {
+    function test_TortoiseMinterSetInProcessRewardsRecipient() public {
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: address(this),
             rewardRecipientPercentage: 5,
             ethReward: ethReward
         });
-        emit ERC20MinterConfigSet(newConfig);
-        minter.setERC20MinterConfig(newConfig);
+        emit TortoiseMinterConfigSet(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
 
-        minterConfig = minter.getERC20MinterConfig();
+        minterConfig = minter.getTortoiseMinterConfig();
         assertEq(minterConfig.inProcessRewardRecipientAddress, address(this));
     }
 
-    function test_ERC20MinterOnlyRecipientAddressCanSet() public {
+    function test_TortoiseMinterOnlyRecipientAddressCanSet() public {
         vm.expectRevert(abi.encodeWithSignature("ONLY_OWNER()"));
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: address(this),
             rewardRecipientPercentage: 5,
             ethReward: ethReward
         });
-        minter.setERC20MinterConfig(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20MinterCannotSetRecipientToZero() public {
+    function test_TortoiseMinterCannotSetRecipientToZero() public {
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         vm.prank(owner);
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: address(0),
             rewardRecipientPercentage: 5,
             ethReward: ethReward
         });
-        minter.setERC20MinterConfig(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
     }
 
     function test_ERC20SetRewardRecipientPercentage(uint256 percentageFuzz) public {
@@ -483,56 +483,56 @@ contract ERC20MinterTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("InvalidValue()"));
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: inProcess,
             rewardRecipientPercentage: 101,
             ethReward: ethReward
         });
-        minter.setERC20MinterConfig(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        newConfig = IERC20Minter.ERC20MinterConfig({inProcessRewardRecipientAddress: inProcess, rewardRecipientPercentage: percentageFuzz, ethReward: ethReward});
-        emit ERC20MinterConfigSet(newConfig);
-        minter.setERC20MinterConfig(newConfig);
+        newConfig = ITortoiseMinter.TortoiseMinterConfig({inProcessRewardRecipientAddress: inProcess, rewardRecipientPercentage: percentageFuzz, ethReward: ethReward});
+        emit TortoiseMinterConfigSet(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20MinterSetEthReward(uint256 ethRewardFuzz) public {
+    function test_TortoiseMinterSetEthReward(uint256 ethRewardFuzz) public {
         vm.assume(ethRewardFuzz >= 0 ether && ethRewardFuzz < 10 ether);
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: inProcess,
             rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
             ethReward: ethRewardFuzz
         });
-        emit ERC20MinterConfigSet(newConfig);
-        minter.setERC20MinterConfig(newConfig);
+        emit TortoiseMinterConfigSet(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20MinterSetOwner() public {
+    function test_TortoiseMinterSetOwner() public {
         vm.prank(inProcess);
         vm.expectRevert(abi.encodeWithSignature("ONLY_OWNER()"));
-        IERC20Minter.ERC20MinterConfig memory newConfig = IERC20Minter.ERC20MinterConfig({
+        ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: inProcess,
             rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
             ethReward: ethReward
         });
-        minter.setERC20MinterConfig(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        newConfig = IERC20Minter.ERC20MinterConfig({
+        newConfig = ITortoiseMinter.TortoiseMinterConfig({
             inProcessRewardRecipientAddress: inProcess,
             rewardRecipientPercentage: minterConfig.rewardRecipientPercentage,
             ethReward: ethReward
         });
-        emit ERC20MinterConfigSet(newConfig);
-        minter.setERC20MinterConfig(newConfig);
+        emit TortoiseMinterConfigSet(newConfig);
+        minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20MinterEthRewardTooLow(uint256 ethRewardLow) public {
+    function test_TortoiseMinterEthRewardTooLow(uint256 ethRewardLow) public {
         vm.assume(ethRewardLow >= 0 ether && ethRewardLow < 0.000111 ether);
 
         uint96 pricePerToken = 10_000;
@@ -550,13 +550,13 @@ contract ERC20MinterTest is Test {
         vm.deal(tokenRecipient, ethRewardLow);
 
         vm.startPrank(tokenRecipient);
-        vm.expectRevert(abi.encodeWithSelector(IERC20Minter.InvalidETHValue.selector, 0.000111 ether * quantity, ethRewardLow));
+        vm.expectRevert(abi.encodeWithSelector(ITortoiseMinter.InvalidETHValue.selector, 0.000111 ether * quantity, ethRewardLow));
         minter.mint{value: ethRewardLow}(tokenRecipient, quantity, address(target), newTokenId, pricePerToken * quantity, address(currency), mintReferral, "");
         vm.stopPrank();
     }
 
-    function test_ERC20MinterSetPremintSale() public {
-        IERC20Minter.PremintSalesConfig memory newConfig = IERC20Minter.PremintSalesConfig({
+    function test_TortoiseMinterSetPremintSale() public {
+        ITortoiseMinter.PremintSalesConfig memory newConfig = ITortoiseMinter.PremintSalesConfig({
             duration: 3000,
             maxTokensPerAddress: 200,
             pricePerToken: 50000,
@@ -569,7 +569,7 @@ contract ERC20MinterTest is Test {
         vm.prank(erc1155Contract);
         minter.setPremintSale(10, abi.encode(newConfig));
 
-        IERC20Minter.SalesConfig memory salesConfig = minter.sale(erc1155Contract, tokenId);
+        ITortoiseMinter.SalesConfig memory salesConfig = minter.sale(erc1155Contract, tokenId);
 
         assertEq(salesConfig.pricePerToken, newConfig.pricePerToken);
         assertEq(salesConfig.saleStart, block.timestamp);

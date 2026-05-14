@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
-/// @notice ERC20Minter Helper contract template
-abstract contract ERC20MinterRewards {
+/// @notice TortoiseMinter Helper contract template
+abstract contract TortoiseMinterRewards {
     uint256 internal constant MIN_PRICE_PER_TOKEN = 10_000;
     uint256 internal constant BPS_TO_PERCENT_2_DECIMAL_PERCISION = 100;
     uint256 internal constant BPS_TO_PERCENT_8_DECIMAL_PERCISION = 100_000_000;

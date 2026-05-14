@@ -4,7 +4,7 @@ pragma solidity ^0.8.17;
 import {IInProcess1155} from "../../../src/in_process/minters/erc20/IInProcess1155.sol";
 
 /// @notice Minimal mock replacing ZoraCreator1155Impl + Zora1155 proxy.
-/// Implements IInProcess1155 (called by ERC20Minter) and the test-facing
+/// Implements IInProcess1155 (called by TortoiseMinter) and the test-facing
 /// surface (setupNewToken, addPermission, callSale, balanceOf).
 ///
 /// callSale() wraps minter revert data as CallFailed(bytes) — the test
@@ -76,10 +76,10 @@ contract MockInProcess1155 is IInProcess1155 {
     }
 
     // -------------------------------------------------------------------------
-    // IInProcess1155 (called by ERC20Minter)
+    // IInProcess1155 (called by TortoiseMinter)
     // -------------------------------------------------------------------------
 
-    /// @notice adminMint is called by ERC20Minter after payment is processed.
+    /// @notice adminMint is called by TortoiseMinter after payment is processed.
     /// Updates balances and records the first minter if not yet set.
     function adminMint(address recipient, uint256 tokenId, uint256 quantity, bytes memory) external override {
         _balances[recipient][tokenId] += quantity;

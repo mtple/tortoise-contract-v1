@@ -3,7 +3,7 @@ pragma solidity ^0.8.17;
 
 import {IMinterPremintSetup} from "./IMinterPremintSetup.sol";
 
-interface IERC20Minter is IMinterPremintSetup {
+interface ITortoiseMinter is IMinterPremintSetup {
     struct RewardsSettings {
         /// @notice Amount of the create referral reward
         uint256 createReferralReward;
@@ -43,7 +43,7 @@ interface IERC20Minter is IMinterPremintSetup {
         address currency;
     }
 
-    struct ERC20MinterConfig {
+    struct TortoiseMinterConfig {
         /// @notice The address of the InProcess rewards recipient
         address inProcessRewardRecipientAddress;
         /// @notice The reward recipient percentage
@@ -92,9 +92,9 @@ interface IERC20Minter is IMinterPremintSetup {
     /// @param salesConfig The sales configuration
     event SaleSet(address indexed mediaContract, uint256 indexed tokenId, SalesConfig salesConfig);
 
-    /// @notice ERC20MinterConfigSet Event
-    /// @param config The ERC20MinterConfig
-    event ERC20MinterConfigSet(ERC20MinterConfig config);
+    /// @notice TortoiseMinterConfigSet Event
+    /// @param config The TortoiseMinterConfig
+    event TortoiseMinterConfigSet(TortoiseMinterConfig config);
 
     /// @notice Cannot set address to zero
     error AddressZero();
@@ -172,12 +172,12 @@ interface IERC20Minter is IMinterPremintSetup {
     /// @notice Returns the ETH reward amount
     function ethRewardAmount() external view returns (uint256);
 
-    /// @notice Sets the ERC20MinterConfig
-    /// @param config The ERC20MinterConfig to set
-    function setERC20MinterConfig(ERC20MinterConfig memory config) external;
+    /// @notice Sets the TortoiseMinterConfig
+    /// @param config The TortoiseMinterConfig to set
+    function setTortoiseMinterConfig(TortoiseMinterConfig memory config) external;
 
-    /// @notice Gets the ERC20MinterConfig
-    function getERC20MinterConfig() external view returns (ERC20MinterConfig memory);
+    /// @notice Gets the TortoiseMinterConfig
+    function getTortoiseMinterConfig() external view returns (TortoiseMinterConfig memory);
 
     /// @notice Sets the sales config based for the msg.sender on the tokenId from the abi encoded premint sales config by
     /// abi decoding it and dynamically building the SalesConfig. The saleStart will be the current block timestamp

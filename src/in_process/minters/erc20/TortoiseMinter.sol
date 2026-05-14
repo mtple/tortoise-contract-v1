@@ -5,26 +5,26 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolRewards} from "../../utils/IProtocolRewards.sol";
-import {IERC20Minter} from "../../interfaces/IERC20Minter.sol";
+import {ITortoiseMinter} from "../../interfaces/ITortoiseMinter.sol";
 import {IMinterPremintSetup} from "../../interfaces/IMinterPremintSetup.sol";
 import {LimitedMintPerAddress} from "../utils/LimitedMintPerAddress.sol";
 import {SaleStrategy} from "../SaleStrategy.sol";
 import {ICreatorCommands} from "../../interfaces/ICreatorCommands.sol";
-import {ERC20MinterRewards} from "./ERC20MinterRewards.sol";
+import {TortoiseMinterRewards} from "./TortoiseMinterRewards.sol";
 import {IInProcess1155} from "./IInProcess1155.sol";
 import {TransferHelperUtils} from "../../utils/TransferHelperUtils.sol";
 import {Initializable} from "../../utils/ownable/Initializable.sol";
 import {Ownable2StepUpgradeable} from "../../utils/ownable/Ownable2StepUpgradeable.sol";
 
-/// @title ERC20Minter
+/// @title TortoiseMinter
 /// @notice Allows for InProcess Mints to be purchased using ERC20 tokens
 /// @dev While this contract _looks_ like a minter, we need to be able to directly manage ERC20 tokens. Therefore, we need to establish minter permissions but instead of using the `requestMint` flow we directly request tokens to be minted in order to safely handle the incoming ERC20 tokens.
 /// @author @isabellasmallcombe
-contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMintPerAddress, ERC20MinterRewards, Initializable, Ownable2StepUpgradeable {
+contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, LimitedMintPerAddress, TortoiseMinterRewards, Initializable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
     /// @notice The ERC20 minter configuration
-    ERC20MinterConfig public minterConfig;
+    TortoiseMinterConfig public minterConfig;
 
     /// @notice The ERC20 sale configuration for a given 1155 token
     /// @dev 1155 token address => 1155 token id => SalesConfig
@@ -34,8 +34,8 @@ contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMint
     /// @dev Allows deterministic contract address, called on deploy
     function initialize(address _inProcessRewardRecipientAddress, address _owner, uint256 _rewardPct, uint256 _ethReward) external initializer {
         __Ownable_init(_owner);
-        _setERC20MinterConfig(
-            ERC20MinterConfig({inProcessRewardRecipientAddress: _inProcessRewardRecipientAddress, rewardRecipientPercentage: _rewardPct, ethReward: _ethReward})
+        _setTortoiseMinterConfig(
+            TortoiseMinterConfig({inProcessRewardRecipientAddress: _inProcessRewardRecipientAddress, rewardRecipientPercentage: _rewardPct, ethReward: _ethReward})
         );
     }
 
@@ -97,8 +97,8 @@ contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMint
         }
     }
 
-    /// @notice Gets the ERC20MinterConfig
-    function getERC20MinterConfig() external view returns (ERC20MinterConfig memory) {
+    /// @notice Gets the TortoiseMinterConfig
+    function getTortoiseMinterConfig() external view returns (TortoiseMinterConfig memory) {
         return minterConfig;
     }
 
@@ -266,11 +266,11 @@ contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMint
     /// @notice Dynamically builds a SalesConfig from a PremintSalesConfig taking into consideration the current block timestamp
     /// and the PremintSalesConfig's duration.
     /// @param config The PremintSalesConfig to build the SalesConfig from
-    function buildSalesConfigForPremint(PremintSalesConfig memory config) public view returns (ERC20Minter.SalesConfig memory) {
+    function buildSalesConfigForPremint(PremintSalesConfig memory config) public view returns (TortoiseMinter.SalesConfig memory) {
         uint64 saleStart = uint64(block.timestamp);
         uint64 saleEnd = config.duration == 0 ? type(uint64).max : saleStart + config.duration;
         return
-            IERC20Minter.SalesConfig({
+            ITortoiseMinter.SalesConfig({
                 saleStart: saleStart,
                 saleEnd: saleEnd,
                 maxTokensPerAddress: config.maxTokensPerAddress,
@@ -323,9 +323,9 @@ contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMint
         revert RequestMintInvalidUseMint();
     }
 
-    /// @notice Sets the ERC20MinterConfig
-    /// @param _config The ERC20MinterConfig to set
-    function _setERC20MinterConfig(ERC20MinterConfig memory _config) internal {
+    /// @notice Sets the TortoiseMinterConfig
+    /// @param _config The TortoiseMinterConfig to set
+    function _setTortoiseMinterConfig(TortoiseMinterConfig memory _config) internal {
         _requireNotAddressZero(_config.inProcessRewardRecipientAddress);
 
         if (_config.rewardRecipientPercentage > 100) {
@@ -333,13 +333,13 @@ contract ERC20Minter is ReentrancyGuard, IERC20Minter, SaleStrategy, LimitedMint
         }
 
         minterConfig = _config;
-        emit ERC20MinterConfigSet(_config);
+        emit TortoiseMinterConfigSet(_config);
     }
 
-    /// @notice Sets the ERC20MinterConfig
-    /// @param config The ERC20MinterConfig to set
-    function setERC20MinterConfig(ERC20MinterConfig memory config) external onlyOwner {
-        _setERC20MinterConfig(config);
+    /// @notice Sets the TortoiseMinterConfig
+    /// @param config The TortoiseMinterConfig to set
+    function setTortoiseMinterConfig(TortoiseMinterConfig memory config) external onlyOwner {
+        _setTortoiseMinterConfig(config);
     }
 
     /// @notice Reverts if the address is address(0)
