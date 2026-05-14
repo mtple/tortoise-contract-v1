@@ -23,7 +23,7 @@ import {TortoiseMinter} from "../src/in_process/minters/TortoiseMinter.sol";
 ///   TORSTest.approve(shell, amount) + shell.fundTortPool(amount)
 contract DeployBaseSepolia is Script {
     // Base Sepolia USDC (Circle official testnet deployment)
-    address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    address constant USDC_BASE_SEPOLIA = 0x14196F08a4Fa0B66B7331bC40dd6bCd8A1dEeA9F;
 
     function run() public {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
