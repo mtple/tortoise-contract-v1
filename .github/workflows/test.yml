@@ -35,4 +35,7 @@ jobs:
         run: forge build --sizes
 
       - name: Run Forge tests
-        run: forge test -vvv
+        run: forge test -vvv --no-match-path "test/fork/*"
+
+      - name: Run Forge fork tests
+        run: forge test -vvv --match-path "test/fork/*" --fork-url https://mainnet.base.org

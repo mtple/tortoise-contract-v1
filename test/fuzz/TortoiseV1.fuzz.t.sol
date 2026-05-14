@@ -27,13 +27,8 @@ contract TortoiseV1FuzzTest is Test {
         usdc = new MockUSDC();
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
-        tortoise = new TortoiseV1(
-            address(usdc),
-            PLATFORM_FEE,
-            DEFAULT_PRICE,
-            address(shell),
-            STAKING_FEE
-        );
+        tortoise =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
 
         shell.addAuthorizedCaller(address(tortoise));
         shell.setTortRewardPerCollection(777_777e18);
@@ -50,8 +45,10 @@ contract TortoiseV1FuzzTest is Test {
     }
 
     /// @dev Fuzz: mint with random quantity, verify only platform fees remain in contract
-    function testFuzz_mintSong_onlyPlatformFeeInContract(uint256 quantity) public {
-        quantity = bound(quantity, 1, 1_000);
+    function testFuzz_mintSong_onlyPlatformFeeInContract(
+        uint256 quantity
+    ) public {
+        quantity = bound(quantity, 1, 1000);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Fuzz Song", 0, 0, "ipfs://fuzz");
@@ -59,11 +56,18 @@ contract TortoiseV1FuzzTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, quantity, buyer);
 
-        assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE * quantity, "Should only hold platform fees");
+        assertEq(
+            usdc.balanceOf(address(tortoise)),
+            PLATFORM_FEE * quantity,
+            "Should only hold platform fees"
+        );
     }
 
     /// @dev Fuzz: mint with random price, verify payment sums
-    function testFuzz_mintSong_paymentSumsCorrectly(uint128 price, uint256 quantity) public {
+    function testFuzz_mintSong_paymentSumsCorrectly(
+        uint128 price,
+        uint256 quantity
+    ) public {
         price = uint128(bound(price, 100_000, 100_000_000)); // MIN_SONG_PRICE to $100
         quantity = bound(quantity, 1, 100);
 
@@ -123,7 +127,11 @@ contract TortoiseV1FuzzTest is Test {
 
         // Split recipients receive exactly the artist revenue
         assertEq(artistGot + collabGot, artistRevenue, "Split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * quantity, "Should only hold platform fees");
+        assertEq(
+            usdc.balanceOf(address(tortoise)),
+            uint256(PLATFORM_FEE) * quantity,
+            "Should only hold platform fees"
+        );
     }
 
     /// @dev Fuzz: random N-way splits (2-10 recipients) sum correctly
@@ -143,7 +151,9 @@ contract TortoiseV1FuzzTest is Test {
         SplitRecipient[] memory splits = new SplitRecipient[](numSplits);
         uint96 perSplit = uint96(10_000 / numSplits);
         // Ensure perSplit >= MIN_PERCENTAGE (100 bps)
-        if (perSplit < 100) perSplit = 100;
+        if (perSplit < 100) {
+            perSplit = 100;
+        }
 
         uint96 totalAssigned = 0;
         address[] memory recipients = new address[](numSplits);
@@ -170,11 +180,18 @@ contract TortoiseV1FuzzTest is Test {
         }
 
         assertEq(totalDistributed, artistRevenue, "Multi-split sum != artist revenue");
-        assertEq(usdc.balanceOf(address(tortoise)), uint256(PLATFORM_FEE) * quantity, "Should only hold platform fees");
+        assertEq(
+            usdc.balanceOf(address(tortoise)),
+            uint256(PLATFORM_FEE) * quantity,
+            "Should only hold platform fees"
+        );
     }
 
     /// @dev Fuzz: random quantity with max supply — verify supply tracking
-    function testFuzz_mintSong_supplyTracking(uint128 maxSupply, uint256 quantity) public {
+    function testFuzz_mintSong_supplyTracking(
+        uint128 maxSupply,
+        uint256 quantity
+    ) public {
         maxSupply = uint128(bound(maxSupply, 1, 10_000));
         quantity = bound(quantity, 1, maxSupply);
 
@@ -211,7 +228,9 @@ contract TortoiseV1FuzzTest is Test {
     }
 
     /// @dev Fuzz: TORT crediting matches quantity * tortRewardPerCollection
-    function testFuzz_mintSong_tortCreditMatchesQuantity(uint256 quantity) public {
+    function testFuzz_mintSong_tortCreditMatchesQuantity(
+        uint256 quantity
+    ) public {
         quantity = bound(quantity, 1, 100);
 
         vm.prank(artist);

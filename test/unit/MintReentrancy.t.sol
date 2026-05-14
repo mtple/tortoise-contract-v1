@@ -20,11 +20,16 @@ contract MaliciousArtist is IERC1155Receiver {
     bool public attackAttempted;
     bool public attackReverted;
 
-    constructor(TortoiseV1 _tortoise) {
+    constructor(
+        TortoiseV1 _tortoise
+    ) {
         tortoise = _tortoise;
     }
 
-    function setTarget(uint256 _songId, SplitRecipient[] calldata _splits) external {
+    function setTarget(
+        uint256 _songId,
+        SplitRecipient[] calldata _splits
+    ) external {
         songId = _songId;
         delete maliciousSplits;
         for (uint256 i = 0; i < _splits.length; i++) {
@@ -32,11 +37,17 @@ contract MaliciousArtist is IERC1155Receiver {
         }
     }
 
-    function createSong(string calldata title, string calldata uri) external returns (uint256) {
+    function createSong(
+        string calldata title,
+        string calldata uri
+    ) external returns (uint256) {
         return tortoise.createSong(title, 0, 0, uri);
     }
 
-    function configureOriginalSplits(uint256 _songId, SplitRecipient[] calldata splits) external {
+    function configureOriginalSplits(
+        uint256 _songId,
+        SplitRecipient[] calldata splits
+    ) external {
         tortoise.configureSplits(_songId, splits);
     }
 
@@ -67,7 +78,9 @@ contract MaliciousArtist is IERC1155Receiver {
         return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+    function supportsInterface(
+        bytes4 interfaceId
+    ) external pure returns (bool) {
         return interfaceId == type(IERC1155Receiver).interfaceId
             || interfaceId == type(IERC165).interfaceId;
     }
@@ -93,9 +106,8 @@ contract MintReentrancyTest is Test {
         usdc = new MockUSDC();
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
-        tortoise = new TortoiseV1(
-            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
-        );
+        tortoise =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
         shell.addAuthorizedCaller(address(tortoise));
         shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
         tort.mint(owner, 100_000e18);
@@ -126,7 +138,7 @@ contract MintReentrancyTest is Test {
 
         // Arm the attack: malicious splits would redirect 100% to attacker.
         SplitRecipient[] memory malicious = new SplitRecipient[](1);
-        malicious[0] = SplitRecipient(address(attacker), 10000);
+        malicious[0] = SplitRecipient(address(attacker), 10_000);
         attacker.setTarget(songId, malicious);
 
         uint256 charityBalBefore = usdc.balanceOf(honestCharity);
@@ -145,7 +157,9 @@ contract MintReentrancyTest is Test {
         uint256 attackerBalAfter = usdc.balanceOf(address(attacker));
         uint256 artistRevenue = DEFAULT_PRICE; // totalCost - fees = price*quantity
         assertEq(charityBalAfter - charityBalBefore, artistRevenue / 2, "charity 50%");
-        assertEq(attackerBalAfter - attackerBalBefore, artistRevenue - artistRevenue / 2, "attacker 50%");
+        assertEq(
+            attackerBalAfter - attackerBalBefore, artistRevenue - artistRevenue / 2, "attacker 50%"
+        );
 
         // Splits in storage are still the honest ones (malicious rewrite never landed).
         SplitRecipient[] memory stored = tortoise.getSongSplits(songId);
@@ -160,12 +174,12 @@ contract MintReentrancyTest is Test {
         // Create a song and mint to the attacker.
         uint256 songId = attacker.createSong("Song", "ipfs://s");
         SplitRecipient[] memory splits = new SplitRecipient[](1);
-        splits[0] = SplitRecipient(address(attacker), 10000);
+        splits[0] = SplitRecipient(address(attacker), 10_000);
         attacker.configureOriginalSplits(songId, splits);
 
         // Arm attack with different splits.
         SplitRecipient[] memory alt = new SplitRecipient[](1);
-        alt[0] = SplitRecipient(honestCharity, 10000);
+        alt[0] = SplitRecipient(honestCharity, 10_000);
         attacker.setTarget(songId, alt);
 
         uint256 attackerBefore = usdc.balanceOf(address(attacker));

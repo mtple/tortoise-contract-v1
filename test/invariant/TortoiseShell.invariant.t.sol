@@ -76,11 +76,7 @@ contract TortoiseShellInvariantTest is Test {
     function invariant_usdcBalanceCoversReserved() public view {
         uint256 shellUsdcBalance = usdc.balanceOf(address(shell));
         uint256 reserved = shell.reservedBalance() / shell.REWARD_SCALAR();
-        assertGe(
-            shellUsdcBalance,
-            reserved,
-            "Shell USDC balance < reserved"
-        );
+        assertGe(shellUsdcBalance, reserved, "Shell USDC balance < reserved");
     }
 
     /// @dev Invariant (audit-12 Finding 1): reservedBalance never exceeds what

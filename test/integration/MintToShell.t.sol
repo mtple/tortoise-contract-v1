@@ -31,9 +31,8 @@ contract MintToShellTest is Test {
         tort = new MockTORT();
 
         shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
-        tortoise = new TortoiseV1(
-            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
-        );
+        tortoise =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
 
         shell.addAuthorizedCaller(address(tortoise));
         shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
@@ -60,7 +59,7 @@ contract MintToShellTest is Test {
     function test_fullMintToShellFlow() public {
         // 1. Staker stakes TORT
         vm.prank(staker);
-        shell.stake(5_000e18);
+        shell.stake(5000e18);
 
         // 2. Artist creates song
         vm.prank(artist);
@@ -98,7 +97,7 @@ contract MintToShellTest is Test {
 
     function test_multipleMints_compoundRewards() public {
         vm.prank(staker);
-        shell.stake(5_000e18);
+        shell.stake(5000e18);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");
@@ -129,7 +128,7 @@ contract MintToShellTest is Test {
 
     function test_fullAccounting_noUsdcUnaccounted() public {
         vm.prank(staker);
-        shell.stake(1_000e18);
+        shell.stake(1000e18);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 1_000_000, 0, "ipfs://test");
@@ -191,7 +190,7 @@ contract MintToShellTest is Test {
     function test_collectAndStake_flywheel() public {
         // Staker stakes TORT directly
         vm.prank(staker);
-        shell.stake(1_000e18);
+        shell.stake(1000e18);
 
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Song", 0, 0, "ipfs://test");

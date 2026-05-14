@@ -92,7 +92,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         _;
     }
 
-    modifier updateReward(address account) {
+    modifier updateReward(
+        address account
+    ) {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
         if (account != address(0)) {
@@ -114,9 +116,15 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         address _rewardToken,
         uint256 _rewardDuration
     ) Ownable(msg.sender) {
-        if (_stakingToken == address(0)) revert ZeroAddress();
-        if (_rewardToken == address(0)) revert ZeroAddress();
-        if (_stakingToken == _rewardToken) revert TokensMustDiffer();
+        if (_stakingToken == address(0)) {
+            revert ZeroAddress();
+        }
+        if (_rewardToken == address(0)) {
+            revert ZeroAddress();
+        }
+        if (_stakingToken == _rewardToken) {
+            revert TokensMustDiffer();
+        }
 
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
@@ -129,8 +137,12 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     // ============ User-Facing Functions ============
 
-    function stake(uint256 amount) external nonReentrant whenNotPaused updateReward(msg.sender) {
-        if (amount == 0) revert ZeroAmount();
+    function stake(
+        uint256 amount
+    ) external nonReentrant whenNotPaused updateReward(msg.sender) {
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
 
         stakedBalance[msg.sender] += amount;
         totalStaked += amount;
@@ -143,7 +155,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit Staked(msg.sender, amount);
     }
 
-    function withdraw(uint256 amount) external nonReentrant updateReward(msg.sender) {
+    function withdraw(
+        uint256 amount
+    ) external nonReentrant updateReward(msg.sender) {
         _withdraw(msg.sender, amount);
     }
 
@@ -158,7 +172,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     function emergencyWithdraw() external nonReentrant updateReward(msg.sender) {
         uint256 amount = stakedBalance[msg.sender];
-        if (amount == 0) revert ZeroAmount();
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
 
         // Forfeit all accrued USDC rewards. Release the accrual slot
         // (reservedBalance) so the forfeited USDC is recycled into future
@@ -195,14 +211,19 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     // ============ Called by TortoiseV1 ============
 
-    function depositRewards(uint256 amount) external onlyAuthorizedCaller updateReward(address(0)) {
+    function depositRewards(
+        uint256 amount
+    ) external onlyAuthorizedCaller updateReward(address(0)) {
         // Calculate actual new USDC from balance vs cumulative deposit tracking.
         // Using totalRewardsDeposited instead of reservedBalance/REWARD_SCALAR avoids
         // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
         // `actual` may exceed `amount` when forfeited rewards are being recycled.
         uint256 currentBalance = rewardToken.balanceOf(address(this));
-        uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
-        if (actual == 0) return;
+        uint256 actual =
+            currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
+        if (actual == 0) {
+            return;
+        }
         totalRewardsDeposited += actual;
         _addReward(actual);
         emit RewardsDeposited(amount, actual, rewardRate);
@@ -212,14 +233,18 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         address user,
         uint256 quantity
     ) external onlyAuthorizedCaller updateReward(user) returns (uint256 credited) {
-        if (user == address(0)) revert ZeroAddress();
+        if (user == address(0)) {
+            revert ZeroAddress();
+        }
         uint256 creditAmount = quantity * tortRewardPerCollection;
 
         // Graceful degradation — never revert, never block mints
         if (creditAmount > tortPool) {
             creditAmount = tortPool;
         }
-        if (creditAmount == 0) return 0;
+        if (creditAmount == 0) {
+            return 0;
+        }
 
         tortPool -= creditAmount;
         stakedBalance[user] += creditAmount;
@@ -248,18 +273,26 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             + ((lastTimeRewardApplicable() - lastUpdateTime) * rewardRate * 1e18) / totalStaked;
     }
 
-    function earned(address account) public view returns (uint256) {
+    function earned(
+        address account
+    ) public view returns (uint256) {
         return (stakedBalance[account] * (rewardPerToken() - userRewardPerTokenPaid[account]))
             / 1e18 + userUnpaidRewards[account];
     }
 
-    function balanceOf(address user) external view returns (uint256) {
+    function balanceOf(
+        address user
+    ) external view returns (uint256) {
         return stakedBalance[user];
     }
 
     function getUserStats(
         address user
-    ) external view returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool) {
+    )
+        external
+        view
+        returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool)
+    {
         stakedAmount = stakedBalance[user];
         pendingUsdcRewards = earned(user) / REWARD_SCALAR;
         shareOfPool = totalStaked == 0 ? 0 : (stakedAmount * 1e18) / totalStaked;
@@ -275,30 +308,46 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     // ============ Owner Functions ============
 
-    function fundTortPool(uint256 amount) external onlyOwner nonReentrant {
-        if (amount == 0) revert ZeroAmount();
+    function fundTortPool(
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
 
         tortPool += amount;
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
         emit TortPoolFunded(amount, tortPool);
     }
 
-    function withdrawTortPool(uint256 amount) external onlyOwner nonReentrant {
-        if (amount == 0) revert ZeroAmount();
-        if (amount > tortPool) revert InsufficientTortPool();
+    function withdrawTortPool(
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+        if (amount > tortPool) {
+            revert InsufficientTortPool();
+        }
 
         tortPool -= amount;
         stakingToken.safeTransfer(msg.sender, amount);
         emit TortPoolWithdrawn(amount, tortPool);
     }
 
-    function setTortRewardPerCollection(uint256 amount) external onlyOwner {
+    function setTortRewardPerCollection(
+        uint256 amount
+    ) external onlyOwner {
         emit TortRewardPerCollectionUpdated(tortRewardPerCollection, amount);
         tortRewardPerCollection = amount;
     }
 
-    function addAuthorizedCaller(address caller) external onlyOwner {
-        if (caller == address(0)) revert ZeroAddress();
+    function addAuthorizedCaller(
+        address caller
+    ) external onlyOwner {
+        if (caller == address(0)) {
+            revert ZeroAddress();
+        }
         require(caller.code.length > 0, "Caller must be a contract");
         authorizedCallers[caller] = true;
         emit AuthorizedCallerAdded(caller);
@@ -308,16 +357,22 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         revert("Renouncing ownership disabled");
     }
 
-    function removeAuthorizedCaller(address caller) external onlyOwner {
+    function removeAuthorizedCaller(
+        address caller
+    ) external onlyOwner {
         authorizedCallers[caller] = false;
         emit AuthorizedCallerRemoved(caller);
     }
 
-    function updateRewardDuration(uint256 newDuration) external onlyOwner {
+    function updateRewardDuration(
+        uint256 newDuration
+    ) external onlyOwner {
         if (newDuration < MIN_REWARD_DURATION || newDuration > MAX_REWARD_DURATION) {
             revert InvalidRewardDuration();
         }
-        if (block.timestamp < periodFinish) revert RewardPeriodActive();
+        if (block.timestamp < periodFinish) {
+            revert RewardPeriodActive();
+        }
         emit RewardDurationUpdated(rewardDuration, newDuration);
         rewardDuration = newDuration;
     }
@@ -330,7 +385,10 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         _unpause();
     }
 
-    function recoverTokens(address token, uint256 amount) external onlyOwner nonReentrant {
+    function recoverTokens(
+        address token,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
         require(token != address(stakingToken), "Cannot recover staking token");
         require(token != address(rewardToken), "Cannot recover reward token");
         IERC20(token).safeTransfer(owner(), amount);
@@ -339,9 +397,16 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     // ============ Internal Functions ============
 
-    function _withdraw(address user, uint256 amount) internal {
-        if (amount == 0) revert ZeroAmount();
-        if (stakedBalance[user] < amount) revert InsufficientBalance();
+    function _withdraw(
+        address user,
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+        if (stakedBalance[user] < amount) {
+            revert InsufficientBalance();
+        }
 
         stakedBalance[user] -= amount;
         totalStaked -= amount;
@@ -363,13 +428,19 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit Withdrawn(user, amount);
     }
 
-    function _claimRewards(address user) internal {
+    function _claimRewards(
+        address user
+    ) internal {
         uint256 reward = userUnpaidRewards[user];
-        if (reward == 0) return;
+        if (reward == 0) {
+            return;
+        }
 
         // Descale from 18 decimals back to 6
         uint256 payout = reward / REWARD_SCALAR;
-        if (payout == 0) return; // dust remains in userUnpaidRewards for next claim
+        if (payout == 0) {
+            return; // dust remains in userUnpaidRewards for next claim
+        }
 
         uint256 exactPaid = payout * REWARD_SCALAR;
         userUnpaidRewards[user] = reward - exactPaid;
@@ -379,7 +450,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit RewardsClaimed(user, payout);
     }
 
-    function _addReward(uint256 reward) internal {
+    function _addReward(
+        uint256 reward
+    ) internal {
         reward *= REWARD_SCALAR;
 
         // Queue rewards when no one is staked — rewardPerToken won't accumulate
@@ -416,7 +489,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     function _flushQueuedReward() internal {
         uint256 queued = _queuedReward;
-        if (queued == 0) return;
+        if (queued == 0) {
+            return;
+        }
 
         // Mirror _addReward's MIN_REWARD_DEPOSIT floor at the flush boundary —
         // otherwise sub-floor amounts queued via mid-period exits (emergencyWithdraw
@@ -425,7 +500,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         // floor is meant to prevent. Aged queues (sat ≥ rewardDuration) escape the
         // gate so low-activity periods can't trap rewards indefinitely.
         bool aged = block.timestamp >= _queuedRewardUpdatedAt + rewardDuration;
-        if (queued < MIN_REWARD_DEPOSIT && !aged) return;
+        if (queued < MIN_REWARD_DEPOSIT && !aged) {
+            return;
+        }
 
         _queuedReward = 0;
         _queuedRewardUpdatedAt = 0;

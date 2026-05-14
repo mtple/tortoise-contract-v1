@@ -17,20 +17,32 @@ library SplitLib {
     error PercentageBelowMinimum();
     error DuplicateRecipient();
 
-    function validateSplits(SplitRecipient[] calldata splits) internal pure {
-        if (splits.length > MAX_SPLITS) revert TooManySplits();
+    function validateSplits(
+        SplitRecipient[] calldata splits
+    ) internal pure {
+        if (splits.length > MAX_SPLITS) {
+            revert TooManySplits();
+        }
 
         uint256 totalPercentage;
         for (uint256 i = 0; i < splits.length; i++) {
-            if (splits[i].recipient == address(0)) revert ZeroAddressRecipient();
-            if (splits[i].percentage < MIN_PERCENTAGE) revert PercentageBelowMinimum();
+            if (splits[i].recipient == address(0)) {
+                revert ZeroAddressRecipient();
+            }
+            if (splits[i].percentage < MIN_PERCENTAGE) {
+                revert PercentageBelowMinimum();
+            }
             totalPercentage += splits[i].percentage;
 
             for (uint256 j = i + 1; j < splits.length; j++) {
-                if (splits[i].recipient == splits[j].recipient) revert DuplicateRecipient();
+                if (splits[i].recipient == splits[j].recipient) {
+                    revert DuplicateRecipient();
+                }
             }
         }
-        if (totalPercentage != BASIS_POINTS) revert InvalidSplitTotal();
+        if (totalPercentage != BASIS_POINTS) {
+            revert InvalidSplitTotal();
+        }
     }
 
     function calculateSplitAmount(
