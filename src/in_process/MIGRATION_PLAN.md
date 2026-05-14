@@ -532,7 +532,7 @@ Create `test/in_process/ERC20Minter.t.sol` with all original test functions inta
 using MockInProcess1155 and MockERC20 instead of the real Zora infrastructure,
 and applying all Zora → InProcess renames from the renaming table above.
 
-### Step 10 — Compile and test
+### ✅ Step 10 — Compile and test
 ```bash
 cd /home/misuka/Documents/GitHub/InProcess/tortoise-contract-v1
 forge build --contracts src/in_process
@@ -559,9 +559,9 @@ Fix any compilation errors that arise (most likely import path issues).
 
 After completing all steps:
 
-- [ ] `forge build --contracts src/in_process` exits with 0 errors
-- [ ] `forge test --match-path "test/in_process/*"` all tests pass
-- [ ] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterAlreadyInitalized` passes (verifies custom Initializable error)
-- [ ] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterSaleFlow` passes (verifies full mint flow through MockZora1155)
-- [ ] `forge build` (entire project) still compiles without errors (no regressions to TortoiseV1/TortoiseShell)
-- [ ] `forge test` (entire project) original Tortoise tests still pass
+- [x] `forge build --contracts src/in_process` exits with 0 errors
+- [x] `forge test --match-path "test/in_process/*"` all tests pass
+- [x] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterAlreadyInitalized` passes (verifies custom Initializable error)
+- [x] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterSaleFlow` passes (verifies full mint flow through MockZora1155)
+- [x] `forge build` (entire project) still compiles without errors (no regressions to TortoiseV1/TortoiseShell)
+- [x] `forge test` (entire project) original Tortoise tests still pass
