@@ -559,9 +559,9 @@ Fix any compilation errors that arise (most likely import path issues).
 
 After completing all steps:
 
-- [x] `forge build --contracts src/in_process` exits with 0 errors
-- [x] `forge test --match-path "test/in_process/*"` all tests pass
-- [x] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterAlreadyInitalized` passes (verifies custom Initializable error)
-- [x] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterSaleFlow` passes (verifies full mint flow through MockZora1155)
-- [x] `forge build` (entire project) still compiles without errors (no regressions to TortoiseV1/TortoiseShell)
-- [x] `forge test` (entire project) original Tortoise tests still pass
+- [✓] `forge build --contracts src/in_process` exits with 0 errors
+- [✓] `forge test --match-path "test/in_process/*"` all tests pass
+- [✓] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterAlreadyInitalized` passes (verifies custom Initializable error)
+- [✓] `forge test --match-path "test/in_process/*" --match-test test_ERC20MinterSaleFlow` passes (verifies full mint flow through MockZora1155)
+- [✓] `forge build` (entire project) still compiles without errors (no regressions to TortoiseV1/TortoiseShell)
+- [✓] `forge test` (entire project) original Tortoise tests still pass
