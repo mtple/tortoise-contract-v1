@@ -523,7 +523,7 @@ Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 - `IZora1155.sol` — no changes
 - `ERC20Minter.sol` — fix OZ ReentrancyGuard import path + fix all relative imports
 
-### Step 8 — Write MockInProcess1155 and MockERC20
+### ✅ Step 8 — Write MockInProcess1155 and MockERC20
 Create `test/in_process/mocks/MockInProcess1155.sol` and `MockERC20.sol`.
 MockInProcess1155 implements IInProcess1155 (our renamed interface).
 
