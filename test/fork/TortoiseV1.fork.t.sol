@@ -33,9 +33,7 @@ contract TortoiseV1ForkTest is Test {
         shell = new TortoiseShell(TORT, USDC, 604_800);
 
         // Deploy TortoiseV1
-        tortoise = new TortoiseV1(
-            USDC, PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
-        );
+        tortoise = new TortoiseV1(USDC, PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
 
         // Wire up
         shell.addAuthorizedCaller(address(tortoise));
@@ -80,7 +78,10 @@ contract TortoiseV1ForkTest is Test {
         uint256 expectedTotal = (uint256(DEFAULT_PRICE) + PLATFORM_FEE + STAKING_FEE) * Q;
         assertEq(buyerUsdcBefore - IERC20(USDC).balanceOf(buyer), expectedTotal);
         assertEq(IERC20(USDC).balanceOf(artist) - artistUsdcBefore, uint256(DEFAULT_PRICE) * Q);
-        assertEq(IERC20(USDC).balanceOf(address(tortoise)) - contractUsdcBefore, uint256(PLATFORM_FEE) * Q);
+        assertEq(
+            IERC20(USDC).balanceOf(address(tortoise)) - contractUsdcBefore,
+            uint256(PLATFORM_FEE) * Q
+        );
         assertEq(IERC20(USDC).balanceOf(address(shell)) - shellUsdcBefore, uint256(STAKING_FEE) * Q);
 
         // Only platform fee held in tortoise

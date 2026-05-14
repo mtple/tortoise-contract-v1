@@ -23,9 +23,8 @@ contract DeployTortoise is Config {
         console.log("TortoiseShell deployed at:", address(shell));
 
         // 2. Deploy TortoiseV1
-        TortoiseV1 tortoise = new TortoiseV1(
-            usdcAddress, platformFee, defaultPrice, address(shell), stakingFee
-        );
+        TortoiseV1 tortoise =
+            new TortoiseV1(usdcAddress, platformFee, defaultPrice, address(shell), stakingFee);
         console.log("TortoiseV1 deployed at:", address(tortoise));
 
         // 3. Register TortoiseV1 as authorized caller

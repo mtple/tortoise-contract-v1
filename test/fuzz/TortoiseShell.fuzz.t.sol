@@ -48,7 +48,9 @@ contract TortoiseShellFuzzTest is Test {
     }
 
     /// @dev Helper to deposit rewards (transfer + call)
-    function _depositRewards(uint256 amount) internal {
+    function _depositRewards(
+        uint256 amount
+    ) internal {
         vm.startPrank(caller);
         usdc.transfer(address(shell), amount);
         shell.depositRewards(amount);
@@ -56,7 +58,9 @@ contract TortoiseShellFuzzTest is Test {
     }
 
     /// @dev Fuzz: stake then withdraw same amount, balance returns to zero
-    function testFuzz_stakeWithdraw_balanceConsistent(uint256 amount) public {
+    function testFuzz_stakeWithdraw_balanceConsistent(
+        uint256 amount
+    ) public {
         amount = bound(amount, 1, 1_000_000_000e18);
 
         vm.prank(alice);
@@ -93,7 +97,9 @@ contract TortoiseShellFuzzTest is Test {
     }
 
     /// @dev Fuzz: creditStake never makes tortPool negative
-    function testFuzz_creditStake_poolNeverNegative(uint256 quantity) public {
+    function testFuzz_creditStake_poolNeverNegative(
+        uint256 quantity
+    ) public {
         quantity = bound(quantity, 1, 10_000);
 
         uint256 poolBefore = shell.tortPool();
@@ -102,17 +108,9 @@ contract TortoiseShellFuzzTest is Test {
         shell.creditStake(alice, quantity);
 
         // Pool should never go negative (graceful degradation)
-        assertLe(
-            shell.stakedBalance(alice),
-            poolBefore,
-            "Credited more than pool had"
-        );
+        assertLe(shell.stakedBalance(alice), poolBefore, "Credited more than pool had");
         // tortPool + credited == original pool
-        assertEq(
-            shell.tortPool() + shell.totalTortCredited(),
-            poolBefore,
-            "Pool accounting broken"
-        );
+        assertEq(shell.tortPool() + shell.totalTortCredited(), poolBefore, "Pool accounting broken");
     }
 
     /// @dev Fuzz: creditStake totalStaked consistency
@@ -136,11 +134,13 @@ contract TortoiseShellFuzzTest is Test {
     }
 
     /// @dev Fuzz: deposit + full drip, claimable ~= deposited
-    function testFuzz_rewardDrip_claimableApproxDeposited(uint256 rewardAmount) public {
+    function testFuzz_rewardDrip_claimableApproxDeposited(
+        uint256 rewardAmount
+    ) public {
         rewardAmount = bound(rewardAmount, 1e6, 1_000_000e6); // $1 to $1M
 
         vm.prank(alice);
-        shell.stake(1_000e18);
+        shell.stake(1000e18);
 
         _depositRewards(rewardAmount);
 
@@ -161,7 +161,7 @@ contract TortoiseShellFuzzTest is Test {
     ) public {
         aliceStake = bound(aliceStake, 1e18, 1_000_000e18);
         bobStake = bound(bobStake, 1e18, 1_000_000e18);
-        rewardAmount = bound(rewardAmount, 1_000e6, 1_000_000e6);
+        rewardAmount = bound(rewardAmount, 1000e6, 1_000_000e6);
 
         vm.prank(alice);
         shell.stake(aliceStake);
@@ -275,16 +275,8 @@ contract TortoiseShellFuzzTest is Test {
 
         // Full dust-preservation invariant: every scaled wei of earned rewards
         // is either paid out (scaledPaid) or carried forward (userUnpaidRewards).
-        assertEq(
-            shell.userUnpaidRewards(alice) + scaledPaid,
-            earnedBefore,
-            "dust burned on claim"
-        );
+        assertEq(shell.userUnpaidRewards(alice) + scaledPaid, earnedBefore, "dust burned on claim");
         // reservedBalance drops by exactly the scaled-paid portion.
-        assertEq(
-            shell.reservedBalance(),
-            reservedBefore - scaledPaid,
-            "reservedBalance drifted"
-        );
+        assertEq(shell.reservedBalance(), reservedBefore - scaledPaid, "reservedBalance drifted");
     }
 }

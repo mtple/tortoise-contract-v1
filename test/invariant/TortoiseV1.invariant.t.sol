@@ -20,13 +20,7 @@ contract TortoiseV1InvariantTest is Test {
         usdc = new MockUSDC();
         tort = new MockTORT();
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
-        tortoise = new TortoiseV1(
-            address(usdc),
-            50_000,
-            850_000,
-            address(shell),
-            100_000
-        );
+        tortoise = new TortoiseV1(address(usdc), 50_000, 850_000, address(shell), 100_000);
 
         shell.addAuthorizedCaller(address(tortoise));
         shell.setTortRewardPerCollection(777_777e18);

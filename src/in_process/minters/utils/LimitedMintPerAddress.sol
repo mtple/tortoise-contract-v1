@@ -9,18 +9,32 @@ contract LimitedMintPerAddress is ILimitedMintPerAddress {
     /// @dev No gap or storage interface since this is used within non-upgradeable contracts
     mapping(address => mapping(uint256 => mapping(address => uint256))) internal mintedPerAddress;
 
-    function getMintedPerWallet(address tokenContract, uint256 tokenId, address wallet) external view returns (uint256) {
+    function getMintedPerWallet(
+        address tokenContract,
+        uint256 tokenId,
+        address wallet
+    ) external view returns (uint256) {
         return mintedPerAddress[tokenContract][tokenId][wallet];
     }
 
-    function _requireMintNotOverLimitAndUpdate(uint256 limit, uint256 numRequestedMint, address tokenContract, uint256 tokenId, address wallet) internal {
+    function _requireMintNotOverLimitAndUpdate(
+        uint256 limit,
+        uint256 numRequestedMint,
+        address tokenContract,
+        uint256 tokenId,
+        address wallet
+    ) internal {
         mintedPerAddress[tokenContract][tokenId][wallet] += numRequestedMint;
         if (mintedPerAddress[tokenContract][tokenId][wallet] > limit) {
-            revert UserExceedsMintLimit(wallet, limit, mintedPerAddress[tokenContract][tokenId][wallet]);
+            revert UserExceedsMintLimit(
+                wallet, limit, mintedPerAddress[tokenContract][tokenId][wallet]
+            );
         }
     }
 
-    function supportsInterface(bytes4 interfaceId) public pure virtual override returns (bool) {
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public pure virtual override returns (bool) {
         return interfaceId == type(ILimitedMintPerAddress).interfaceId;
     }
 }

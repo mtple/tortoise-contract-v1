@@ -10,13 +10,18 @@ import {Initializable} from "./Initializable.sol";
 /// @notice Modified from OpenZeppelin Contracts v4.7.3 (access/OwnableUpgradeable.sol)
 /// - Uses custom errors declared in IOwnable
 /// - Adds optional two-step ownership transfer (`safeTransferOwnership` + `acceptOwnership`)
-abstract contract Ownable2StepUpgradeable is IOwnable2StepUpgradeable, IOwnable2StepStorageV1, Initializable {
+abstract contract Ownable2StepUpgradeable is
+    IOwnable2StepUpgradeable,
+    IOwnable2StepStorageV1,
+    Initializable
+{
     ///                                                          ///
     ///                            STORAGE                       ///
     ///                                                          ///
-
     /// @dev Modifier to check if the address argument is the zero/burn address
-    modifier notZeroAddress(address check) {
+    modifier notZeroAddress(
+        address check
+    ) {
         if (check == address(0)) {
             revert OWNER_CANNOT_BE_ZERO_ADDRESS();
         }
@@ -49,7 +54,9 @@ abstract contract Ownable2StepUpgradeable is IOwnable2StepUpgradeable, IOwnable2
 
     /// @dev Initializes contract ownership
     /// @param _initialOwner The initial owner address
-    function __Ownable_init(address _initialOwner) internal notZeroAddress(_initialOwner) onlyInitializing {
+    function __Ownable_init(
+        address _initialOwner
+    ) internal notZeroAddress(_initialOwner) onlyInitializing {
         _owner = _initialOwner;
 
         emit OwnerUpdated(address(0), _initialOwner);
@@ -67,14 +74,18 @@ abstract contract Ownable2StepUpgradeable is IOwnable2StepUpgradeable, IOwnable2
 
     /// @notice Forces an ownership transfer from the last owner
     /// @param _newOwner The new owner address
-    function transferOwnership(address _newOwner) public notZeroAddress(_newOwner) onlyOwner {
+    function transferOwnership(
+        address _newOwner
+    ) public notZeroAddress(_newOwner) onlyOwner {
         _transferOwnership(_newOwner);
     }
 
     /// @notice Forces an ownership transfer from any sender
     /// @param _newOwner New owner to transfer contract to
     /// @dev Ensure is called only from trusted internal code, no access control checks.
-    function _transferOwnership(address _newOwner) internal {
+    function _transferOwnership(
+        address _newOwner
+    ) internal {
         emit OwnerUpdated(_owner, _newOwner);
 
         _owner = _newOwner;
@@ -86,7 +97,9 @@ abstract contract Ownable2StepUpgradeable is IOwnable2StepUpgradeable, IOwnable2
 
     /// @notice Initiates a two-step ownership transfer
     /// @param _newOwner The new owner address
-    function safeTransferOwnership(address _newOwner) public notZeroAddress(_newOwner) onlyOwner {
+    function safeTransferOwnership(
+        address _newOwner
+    ) public notZeroAddress(_newOwner) onlyOwner {
         _pendingOwner = _newOwner;
 
         emit OwnerPending(_owner, _newOwner);

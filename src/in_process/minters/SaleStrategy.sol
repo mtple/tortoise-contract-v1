@@ -11,9 +11,14 @@ import {IVersionedContract} from "../interfaces/shared/IVersionedContract.sol";
 abstract contract SaleStrategy is IMinter1155, IVersionedContract, IContractMetadata {
     /// @notice This function resets the sales configuration for a given tokenId and contract.
     /// @dev This function is intentioned to be called directly from the affected sales contract
-    function resetSale(uint256 tokenId) external virtual;
+    function resetSale(
+        uint256 tokenId
+    ) external virtual;
 
-    function supportsInterface(bytes4 interfaceId) public pure virtual returns (bool) {
-        return interfaceId == type(IMinter1155).interfaceId || interfaceId == type(IERC165Upgradeable).interfaceId;
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public pure virtual returns (bool) {
+        return interfaceId == type(IMinter1155).interfaceId
+            || interfaceId == type(IERC165Upgradeable).interfaceId;
     }
 }

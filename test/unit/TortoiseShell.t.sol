@@ -52,7 +52,9 @@ contract TortoiseShellTest is Test {
     }
 
     /// @dev Simulates TortoiseV1 flow: transfer USDC to shell then call depositRewards
-    function _depositRewardsAsV1(uint256 amount) internal {
+    function _depositRewardsAsV1(
+        uint256 amount
+    ) internal {
         vm.startPrank(tortoiseV1);
         usdc.transfer(address(shell), amount);
         shell.depositRewards(amount);
@@ -537,7 +539,11 @@ contract TortoiseShellTest is Test {
         // userUnpaidRewards holds only the sub-REWARD_SCALAR remainder.
         assertEq(shell.userUnpaidRewards(alice), expectedRemainder, "remainder not preserved");
         // reservedBalance drops by the exact-paid portion only.
-        assertEq(shell.reservedBalance(), reservedBefore - (expectedPayout * 1e12), "reservedBalance mismatch");
+        assertEq(
+            shell.reservedBalance(),
+            reservedBefore - (expectedPayout * 1e12),
+            "reservedBalance mismatch"
+        );
         assertEq(usdc.balanceOf(alice), expectedPayout, "payout mismatch");
     }
 
@@ -589,8 +595,8 @@ contract TortoiseShellTest is Test {
 
     function test_withdrawTortPool() public {
         uint256 poolBefore = shell.tortPool();
-        shell.withdrawTortPool(1_000e18);
-        assertEq(shell.tortPool(), poolBefore - 1_000e18);
+        shell.withdrawTortPool(1000e18);
+        assertEq(shell.tortPool(), poolBefore - 1000e18);
     }
 
     function test_withdrawTortPool_revertsInsufficientPool() public {
@@ -822,8 +828,16 @@ contract TortoiseShellTest is Test {
         _depositRewardsAsV1(500_000);
 
         assertEq(shell.rewardRate(), rateBefore, "rate must not change on sub-threshold deposit");
-        assertEq(shell.periodFinish(), finishBefore, "periodFinish must not reset on sub-threshold deposit");
-        assertEq(shell.reservedBalance(), reservedBefore, "reservedBalance must not grow on sub-threshold deposit");
+        assertEq(
+            shell.periodFinish(),
+            finishBefore,
+            "periodFinish must not reset on sub-threshold deposit"
+        );
+        assertEq(
+            shell.reservedBalance(),
+            reservedBefore,
+            "reservedBalance must not grow on sub-threshold deposit"
+        );
     }
 
     /// @dev Accumulated sub-threshold deposits fold into the next qualifying deposit.
@@ -857,7 +871,9 @@ contract TortoiseShellTest is Test {
             2_900_000 * 1e12,
             "reservedBalance must absorb queued + new on flush"
         );
-        assertNotEq(shell.rewardRate(), rateBeforeQualifying, "qualifying deposit should recompute rate");
+        assertNotEq(
+            shell.rewardRate(), rateBeforeQualifying, "qualifying deposit should recompute rate"
+        );
     }
 
     /// @dev audit-12 Finding 2 Part A: stake must NOT flush a sub-floor queued
@@ -875,7 +891,9 @@ contract TortoiseShellTest is Test {
 
         // Queue 0.7 USDC sub-threshold.
         _depositRewardsAsV1(700_000);
-        assertEq(shell.reservedBalance(), reservedAfterPrimer, "still queued, no reservedBalance change");
+        assertEq(
+            shell.reservedBalance(), reservedAfterPrimer, "still queued, no reservedBalance change"
+        );
 
         // Bob stakes — sub-floor queue must remain queued under the Part A gate.
         vm.prank(bob);

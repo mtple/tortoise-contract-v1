@@ -64,11 +64,7 @@ contract MintShellInvariantTest is Test {
     /// (i.e. shell can always honor all outstanding claims).
     function invariant_shellSolventForClaims() public view {
         uint256 reserved = shell.reservedBalance() / REWARD_SCALAR;
-        assertGe(
-            usdc.balanceOf(address(shell)),
-            reserved,
-            "shell insolvent vs reservedBalance"
-        );
+        assertGe(usdc.balanceOf(address(shell)), reserved, "shell insolvent vs reservedBalance");
     }
 
     /// @dev Conservation: USDC flowing into shell from mints equals

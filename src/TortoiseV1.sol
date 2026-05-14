@@ -64,16 +64,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     event StakingFeeDistributed(uint256 indexed songId, uint256 amount);
     event StakingFeeAbsorbed(uint256 indexed songId, uint256 amount, bytes reason);
     event StakeCredited(
-        uint256 indexed songId,
-        address indexed recipient,
-        uint256 quantity,
-        uint256 creditedAmount
+        uint256 indexed songId, address indexed recipient, uint256 quantity, uint256 creditedAmount
     );
     event ShellCreditFailed(
-        uint256 indexed songId,
-        address indexed recipient,
-        uint256 quantity,
-        bytes reason
+        uint256 indexed songId, address indexed recipient, uint256 quantity, bytes reason
     );
     event PlatformFeeUpdated(uint64 oldFee, uint64 newFee);
     event StakingFeeUpdated(uint64 oldFee, uint64 newFee);
@@ -119,8 +113,12 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
         emit DefaultPriceUpdated(0, initialPrice);
         emit PlatformFeeUpdated(0, initialPlatformFee);
-        if (_stakingFee > 0) emit StakingFeeUpdated(0, _stakingFee);
-        if (_tortoiseShell != address(0)) emit TortoiseShellUpdated(address(0), _tortoiseShell);
+        if (_stakingFee > 0) {
+            emit StakingFeeUpdated(0, _stakingFee);
+        }
+        if (_tortoiseShell != address(0)) {
+            emit TortoiseShellUpdated(address(0), _tortoiseShell);
+        }
     }
 
     // ============ View Functions ============
@@ -133,20 +131,28 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         return _symbol;
     }
 
-    function getSongDetails(uint256 songId) external view returns (Song memory) {
+    function getSongDetails(
+        uint256 songId
+    ) external view returns (Song memory) {
         return songs[songId];
     }
 
-    function getSongSplits(uint256 songId) external view returns (SplitRecipient[] memory) {
+    function getSongSplits(
+        uint256 songId
+    ) external view returns (SplitRecipient[] memory) {
         return songSplits[songId];
     }
 
-    function uri(uint256 songId) public view override returns (string memory) {
+    function uri(
+        uint256 songId
+    ) public view override returns (string memory) {
         require(songs[songId].exists, "Song does not exist");
         return tokenUris[songId];
     }
 
-    function getArtistSongs(address artist) external view returns (uint256[] memory) {
+    function getArtistSongs(
+        address artist
+    ) external view returns (uint256[] memory) {
         return artistSongs[artist];
     }
 
@@ -156,7 +162,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
     /// @notice Total cost: (price + platformFee + stakingFee) * quantity
     /// All three components scale per copy so cost is proportional to TORT credit received.
-    function calculateTotalCost(uint256 songId, uint256 quantity) public view returns (uint256) {
+    function calculateTotalCost(
+        uint256 songId,
+        uint256 quantity
+    ) public view returns (uint256) {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
         return (uint256(song.price) + config.platformFee + config.stakingFee) * quantity;
@@ -212,7 +221,9 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         emit SplitsConfigured(songId, splits);
     }
 
-    function lockSplits(uint256 songId) external whenNotPaused nonReentrant {
+    function lockSplits(
+        uint256 songId
+    ) external whenNotPaused nonReentrant {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
         require(msg.sender == song.artist, "Only artist can lock splits");
@@ -230,7 +241,8 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     ) external nonReentrant whenNotPaused {
         _validateMint(songId, quantity);
         ContractConfig memory cfg = config;
-        uint256 totalCost = (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
+        uint256 totalCost =
+            (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
         IERC20(cfg.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
         _processMint(songId, quantity, recipient, totalCost, cfg);
     }
@@ -245,7 +257,8 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     ) external nonReentrant whenNotPaused {
         _validateMint(songId, quantity);
         ContractConfig memory cfg = config;
-        uint256 totalCost = (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
+        uint256 totalCost =
+            (uint256(songs[songId].price) + cfg.platformFee + cfg.stakingFee) * quantity;
         require(totalCost <= maxTotalCost, "Slippage: cost exceeds max");
         IERC20(cfg.usdcToken).safeTransferFrom(msg.sender, address(this), totalCost);
         _processMint(songId, quantity, recipient, totalCost, cfg);
@@ -253,20 +266,26 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
     // ============ Admin Functions ============
 
-    function updatePlatformFee(uint64 newFee) external onlyOwner {
+    function updatePlatformFee(
+        uint64 newFee
+    ) external onlyOwner {
         require(newFee <= MAX_PLATFORM_FEE, "Fee exceeds maximum");
         emit PlatformFeeUpdated(config.platformFee, newFee);
         config.platformFee = newFee;
     }
 
-    function updateStakingFee(uint64 newFee) external onlyOwner {
+    function updateStakingFee(
+        uint64 newFee
+    ) external onlyOwner {
         require(newFee <= MAX_STAKING_FEE, "Fee exceeds maximum");
         require(newFee == 0 || config.tortoiseShell != address(0), "No shell configured");
         emit StakingFeeUpdated(config.stakingFee, newFee);
         config.stakingFee = newFee;
     }
 
-    function updateTortoiseShell(address newShell) external onlyOwner {
+    function updateTortoiseShell(
+        address newShell
+    ) external onlyOwner {
         require(newShell == address(0) || newShell.code.length > 0, "Shell must be a contract");
         emit TortoiseShellUpdated(config.tortoiseShell, newShell);
         config.tortoiseShell = newShell;
@@ -276,7 +295,9 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         }
     }
 
-    function updateDefaultPrice(uint128 newPrice) external onlyOwner {
+    function updateDefaultPrice(
+        uint128 newPrice
+    ) external onlyOwner {
         require(newPrice >= MIN_SONG_PRICE, "Price below minimum");
         emit DefaultPriceUpdated(config.defaultSongPrice, newPrice);
         config.defaultSongPrice = newPrice;
@@ -298,7 +319,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         _unpause();
     }
 
-    function recoverTokens(address token, uint256 amount) external onlyOwner nonReentrant {
+    function recoverTokens(
+        address token,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
         require(token != config.usdcToken, "Cannot recover USDC");
         IERC20(token).safeTransfer(owner(), amount);
         emit TokensRecovered(token, owner(), amount);
@@ -312,13 +336,15 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
     /// (e.g. due to Circle blocklist). Anyone can claim on behalf of any recipient.
     /// Uses the same low-level call pattern as _transferOrDefer so a still-blocklisted
     /// recipient does not permanently brick the claim — it restores and reverts instead.
-    function claimPending(uint256 songId, address recipient) external nonReentrant {
+    function claimPending(
+        uint256 songId,
+        address recipient
+    ) external nonReentrant {
         uint256 amount = pendingClaims[songId][recipient];
         require(amount > 0, "Nothing to claim");
         pendingClaims[songId][recipient] = 0;
-        (bool ok, bytes memory ret) = address(config.usdcToken).call(
-            abi.encodeCall(IERC20.transfer, (recipient, amount))
-        );
+        (bool ok, bytes memory ret) =
+            address(config.usdcToken).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
         bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
         if (transferred) {
             pendingClaimDeferredAt[songId][recipient] = 0;
@@ -354,7 +380,10 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
 
     // ============ Internal Functions ============
 
-    function _validateMint(uint256 songId, uint256 quantity) internal view {
+    function _validateMint(
+        uint256 songId,
+        uint256 quantity
+    ) internal view {
         Song storage song = songs[songId];
         require(song.exists, "Song does not exist");
         require(quantity > 0, "Quantity must be positive");
@@ -382,7 +411,9 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         // receiver callback cannot observe or manipulate mid-mint state.
         uint256 scaledPlatformFee = uint256(cfg.platformFee) * quantity;
         uint256 scaledStakingFee = uint256(cfg.stakingFee) * quantity;
-        bool feeForwarded = _distributePayments(songId, quantity, totalCost, scaledPlatformFee, scaledStakingFee, cfg);
+        bool feeForwarded = _distributePayments(
+            songId, quantity, totalCost, scaledPlatformFee, scaledStakingFee, cfg
+        );
         // Only credit TORT when the staking fee was actually forwarded to Shell.
         // Guards both the pool-insufficient path (fee orphaned to platformFeesAccrued)
         // and the zero-fee misconfiguration path (stakingFee == 0 with funded pool).
@@ -402,7 +433,7 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         uint256 quantity,
         uint256 totalCost,
         uint256 platformFeeAmount, // pre-scaled by quantity
-        uint256 stakingFeeAmount,  // pre-scaled by quantity
+        uint256 stakingFeeAmount, // pre-scaled by quantity
         ContractConfig memory cfg
     ) internal returns (bool stakingFeeForwarded) {
         IERC20 usdc = IERC20(cfg.usdcToken);
@@ -458,25 +489,33 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
             for (uint256 i; i < len;) {
                 SplitRecipient storage r = splits[i];
                 uint256 amount = (i == len - 1)
-                    ? artistRevenue - distributed // Remainder to last recipient
+                    ? artistRevenue - distributed  // Remainder to last recipient
                     : SplitLib.calculateSplitAmount(artistRevenue, r.percentage);
                 if (amount > 0) {
                     _transferOrDefer(songId, usdc, r.recipient, amount);
                 }
                 distributed += amount;
-                unchecked { ++i; }
+                unchecked {
+                    ++i;
+                }
             }
         }
     }
 
     /// @dev Attempt USDC transfer; on failure (call reverts or returns false) defer
     /// to pendingClaims so one bad address cannot brick the entire song (Finding 5).
-    function _transferOrDefer(uint256 songId, IERC20 usdc, address recipient, uint256 amount) internal {
+    function _transferOrDefer(
+        uint256 songId,
+        IERC20 usdc,
+        address recipient,
+        uint256 amount
+    ) internal {
         // Guard against zero-code USDC address (e.g. during proxy upgrade).
         // A call to an empty-code address returns ok=true, ret.length==0 — indistinguishable
         // from a normal no-return-value success — so we check code length first.
         require(address(usdc).code.length > 0, "USDC has no code");
-        (bool ok, bytes memory ret) = address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
+        (bool ok, bytes memory ret) =
+            address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
         // ret.length >= 32 guards against abi.decode panic on malformed 1-31 byte returns.
         bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
         if (transferred) {
@@ -497,7 +536,9 @@ contract TortoiseV1 is ERC1155, Ownable2Step, ReentrancyGuardTransient, Pausable
         uint256 quantity,
         address shell
     ) internal {
-        if (shell == address(0)) return;
+        if (shell == address(0)) {
+            return;
+        }
 
         try ITortoiseShell(shell).creditStake(recipient, quantity) returns (uint256 credited) {
             emit StakeCredited(songId, recipient, quantity, credited);

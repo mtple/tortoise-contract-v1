@@ -42,10 +42,7 @@ contract AuditRemediationTest is Test {
         uint256 indexed songId, address indexed recipient, uint256 quantity, bytes reason
     );
     event StakeCredited(
-        uint256 indexed songId,
-        address indexed recipient,
-        uint256 quantity,
-        uint256 creditedAmount
+        uint256 indexed songId, address indexed recipient, uint256 quantity, uint256 creditedAmount
     );
     event StakingFeeUpdated(uint64 oldFee, uint64 newFee);
 
@@ -54,9 +51,8 @@ contract AuditRemediationTest is Test {
         tort = new MockTORT();
 
         shell = new TortoiseShell(address(tort), address(usdc), REWARD_DURATION);
-        tortoise = new TortoiseV1(
-            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE
-        );
+        tortoise =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
 
         shell.addAuthorizedCaller(address(tortoise));
         shell.setTortRewardPerCollection(TORT_PER_COLLECTION);
@@ -158,8 +154,12 @@ contract AuditRemediationTest is Test {
         bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
         bytes32 failedTopic = keccak256("ShellCreditFailed(uint256,address,uint256,bytes)");
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == creditedTopic) sawCredited = true;
-            if (logs[i].topics[0] == failedTopic) sawFailed = true;
+            if (logs[i].topics[0] == creditedTopic) {
+                sawCredited = true;
+            }
+            if (logs[i].topics[0] == failedTopic) {
+                sawFailed = true;
+            }
         }
         assertTrue(sawCredited, "expected StakeCredited");
         assertFalse(sawFailed, "did not expect ShellCreditFailed");
@@ -207,7 +207,9 @@ contract AuditRemediationTest is Test {
         bytes32 deferredTopic = keccak256("StakingFeeAbsorbed(uint256,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
+            if (logs[i].topics[0] == deferredTopic) {
+                sawDeferred = true;
+            }
         }
         assertTrue(sawDeferred, "expected StakingFeeDeferred");
         assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT should still mint");
@@ -231,7 +233,11 @@ contract AuditRemediationTest is Test {
         bytes32 failedTopic = keccak256("ShellCreditFailed(uint256,address,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when pool is exhausted");
+            assertNotEq(
+                logs[i].topics[0],
+                creditedTopic,
+                "StakeCredited must not fire when pool is exhausted"
+            );
             assertNotEq(logs[i].topics[0], failedTopic, "ShellCreditFailed must not fire");
         }
         assertEq(shell.tortPool(), 0, "pool remains at zero");
@@ -312,7 +318,9 @@ contract AuditRemediationTest is Test {
 
         // Contract holds PLATFORM_FEE + 42e6 but accrued is still PLATFORM_FEE.
         assertEq(usdc.balanceOf(address(tortoise)), PLATFORM_FEE + 42e6);
-        assertEq(tortoise.platformFeesAccrued(), PLATFORM_FEE, "stray USDC must not inflate accrued");
+        assertEq(
+            tortoise.platformFeesAccrued(), PLATFORM_FEE, "stray USDC must not inflate accrued"
+        );
 
         uint256 ownerBefore = usdc.balanceOf(owner);
         tortoise.withdrawPlatformFees();
@@ -457,8 +465,8 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        uint256 artistRevenue = uint256(DEFAULT_PRICE) * 1 + PLATFORM_FEE + STAKING_FEE
-            - PLATFORM_FEE - STAKING_FEE; // = DEFAULT_PRICE
+        uint256 artistRevenue =
+            uint256(DEFAULT_PRICE) * 1 + PLATFORM_FEE + STAKING_FEE - PLATFORM_FEE - STAKING_FEE; // = DEFAULT_PRICE
         uint256 perShare = artistRevenue / 10;
 
         uint256 distributed;
@@ -602,7 +610,11 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, Q, buyer);
 
-        assertEq(buyerBefore - usdc.balanceOf(buyer), quoted, "calculateTotalCost must match actual debit");
+        assertEq(
+            buyerBefore - usdc.balanceOf(buyer),
+            quoted,
+            "calculateTotalCost must match actual debit"
+        );
     }
 
     // ==========================================================
@@ -623,7 +635,11 @@ contract AuditRemediationTest is Test {
         tortoise.mintSong(songId, 1, buyer);
 
         // Shell received no USDC (pool was empty — stakingFee stays in V1)
-        assertEq(usdc.balanceOf(address(shell)), shellUsdcBefore, "shell should not receive staking fee when pool empty");
+        assertEq(
+            usdc.balanceOf(address(shell)),
+            shellUsdcBefore,
+            "shell should not receive staking fee when pool empty"
+        );
         // V1 holds platformFee + stakingFee (both stay)
         assertEq(
             usdc.balanceOf(address(tortoise)) - v1UsdcBefore,
@@ -640,7 +656,11 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        assertEq(usdc.balanceOf(address(shell)) - shellUsdcBefore, STAKING_FEE, "staking fee not forwarded");
+        assertEq(
+            usdc.balanceOf(address(shell)) - shellUsdcBefore,
+            STAKING_FEE,
+            "staking fee not forwarded"
+        );
     }
 
     // ==========================================================
@@ -678,7 +698,9 @@ contract AuditRemediationTest is Test {
         assertEq(usdc.balanceOf(normal), DEFAULT_PRICE / 2, "normal recipient not paid");
         // `blocked` has nothing in wallet but has a pending claim
         assertEq(usdc.balanceOf(blocked), 0, "blocked should have no direct balance");
-        assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE / 2, "pending claim not set");
+        assertEq(
+            tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE / 2, "pending claim not set"
+        );
 
         // Now the blocklist lifts — blocked can claimPending
         vm.clearMockedCalls();
@@ -820,7 +842,7 @@ contract AuditRemediationTest is Test {
 
         // Configure a split with a recipient that will have their transfer blocked.
         address blocked = makeAddr("blocked7");
-        address normal  = makeAddr("normal7");
+        address normal = makeAddr("normal7");
         SplitRecipient[] memory splits = new SplitRecipient[](2);
         splits[0] = SplitRecipient(blocked, 5000);
         splits[1] = SplitRecipient(normal, 5000);
@@ -830,9 +852,7 @@ contract AuditRemediationTest is Test {
         // Mock the blocked transfer to return false.
         uint256 blockedShare = DEFAULT_PRICE / 2;
         vm.mockCall(
-            address(usdc),
-            abi.encodeCall(usdc.transfer, (blocked, blockedShare)),
-            abi.encode(false)
+            address(usdc), abi.encodeCall(usdc.transfer, (blocked, blockedShare)), abi.encode(false)
         );
 
         vm.prank(buyer);
@@ -967,7 +987,9 @@ contract AuditRemediationTest is Test {
         bytes32 deferredTopic = keccak256("StakingFeeAbsorbed(uint256,uint256,bytes)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == deferredTopic) sawDeferred = true;
+            if (logs[i].topics[0] == deferredTopic) {
+                sawDeferred = true;
+            }
         }
         assertTrue(sawDeferred, "expected StakingFeeDeferred event");
         assertEq(tortoise.balanceOf(buyer, songId), 1, "NFT must still mint");
@@ -1057,7 +1079,11 @@ contract AuditRemediationTest is Test {
         uint256 amount
     );
 
-    function _deferClaimFor(uint256 songId, address recipient, uint256 share) internal {
+    function _deferClaimFor(
+        uint256 songId,
+        address recipient,
+        uint256 share
+    ) internal {
         SplitRecipient[] memory splits = new SplitRecipient[](1);
         splits[0] = SplitRecipient(recipient, 10_000);
         vm.prank(artist);
@@ -1144,7 +1170,11 @@ contract AuditRemediationTest is Test {
         vm.clearMockedCalls();
 
         // Malformed return treated as failure → deferred.
-        assertEq(tortoise.pendingClaims(songId, r), DEFAULT_PRICE, "should be deferred on malformed return");
+        assertEq(
+            tortoise.pendingClaims(songId, r),
+            DEFAULT_PRICE,
+            "should be deferred on malformed return"
+        );
     }
 
     // ==========================================================
@@ -1195,7 +1225,11 @@ contract AuditRemediationTest is Test {
         vm.clearMockedCalls();
 
         // deferredAt must now be T0 + 91 days, not T0.
-        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), t0 + 91 days, "deferredAt not refreshed");
+        assertEq(
+            tortoise.pendingClaimDeferredAt(songId, blocked),
+            t0 + 91 days,
+            "deferredAt not refreshed"
+        );
 
         // Reroute must revert — the fresh 90-day window has not elapsed.
         vm.expectRevert("Too soon");
@@ -1218,8 +1252,12 @@ contract AuditRemediationTest is Test {
 
         // Defer both A and B.
         uint256 halfPrice = DEFAULT_PRICE / 2;
-        vm.mockCall(address(usdc), abi.encodeCall(usdc.transfer, (addrA, halfPrice)), abi.encode(false));
-        vm.mockCall(address(usdc), abi.encodeCall(usdc.transfer, (addrB, halfPrice)), abi.encode(false));
+        vm.mockCall(
+            address(usdc), abi.encodeCall(usdc.transfer, (addrA, halfPrice)), abi.encode(false)
+        );
+        vm.mockCall(
+            address(usdc), abi.encodeCall(usdc.transfer, (addrB, halfPrice)), abi.encode(false)
+        );
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
         vm.clearMockedCalls();
@@ -1244,7 +1282,9 @@ contract AuditRemediationTest is Test {
         // After another 90 days B → C succeeds.
         vm.warp(t0 + 91 days + 90 days);
         tortoise.rerouteBlockedClaim(songId, addrB, addrC);
-        assertEq(tortoise.pendingClaims(songId, addrC), halfPrice * 2, "C should hold merged amount");
+        assertEq(
+            tortoise.pendingClaims(songId, addrC), halfPrice * 2, "C should hold merged amount"
+        );
     }
 
     // ==========================================================
@@ -1298,7 +1338,11 @@ contract AuditRemediationTest is Test {
         // Claim succeeds — deferredAt must be zeroed.
         tortoise.claimPending(songId, blocked);
         assertEq(tortoise.pendingClaims(songId, blocked), 0);
-        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), 0, "deferredAt must be cleared on successful claim");
+        assertEq(
+            tortoise.pendingClaimDeferredAt(songId, blocked),
+            0,
+            "deferredAt must be cleared on successful claim"
+        );
     }
 
     function test_claimPending_preservesDeferredAtOnFailure() public {
@@ -1332,7 +1376,11 @@ contract AuditRemediationTest is Test {
         vm.clearMockedCalls();
 
         assertEq(tortoise.pendingClaims(songId, blocked), DEFAULT_PRICE, "claim must be preserved");
-        assertEq(tortoise.pendingClaimDeferredAt(songId, blocked), deferredAt, "deferredAt must be unchanged on failure");
+        assertEq(
+            tortoise.pendingClaimDeferredAt(songId, blocked),
+            deferredAt,
+            "deferredAt must be unchanged on failure"
+        );
     }
 
     function test_rerouteBlockedClaim_revertsOnSelfReroute() public {
@@ -1419,7 +1467,9 @@ contract AuditRemediationTest is Test {
         bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when rate is zero");
+            assertNotEq(
+                logs[i].topics[0], creditedTopic, "StakeCredited must not fire when rate is zero"
+            );
         }
 
         assertEq(freshShell.tortPool(), poolBefore, "pool must not be touched when rate is zero");
@@ -1442,7 +1492,11 @@ contract AuditRemediationTest is Test {
         bytes32 creditedTopic = keccak256("StakeCredited(uint256,address,uint256,uint256)");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
-            assertNotEq(logs[i].topics[0], creditedTopic, "StakeCredited must not fire when stakingFee is zero");
+            assertNotEq(
+                logs[i].topics[0],
+                creditedTopic,
+                "StakeCredited must not fire when stakingFee is zero"
+            );
         }
 
         assertEq(shell.tortPool(), poolBefore, "pool must not be drained when stakingFee is zero");
@@ -1461,7 +1515,9 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         tortoise.mintSong(songId, 1, buyer);
 
-        assertEq(shell.stakedBalance(buyer), TORT_PER_COLLECTION, "buyer should receive TORT credit");
+        assertEq(
+            shell.stakedBalance(buyer), TORT_PER_COLLECTION, "buyer should receive TORT credit"
+        );
         assertLt(shell.tortPool(), poolBefore, "pool should be debited");
     }
 
@@ -1510,11 +1566,7 @@ contract AuditRemediationTest is Test {
         vm.prank(buyer);
         shell.stake(1e18);
 
-        assertEq(
-            shell.rewardRate(),
-            0,
-            "sub-floor queued reward must not flush into a new period"
-        );
+        assertEq(shell.rewardRate(), 0, "sub-floor queued reward must not flush into a new period");
     }
 
     /// @dev Same setup, but warp past rewardDuration before re-staking. The
@@ -1550,11 +1602,7 @@ contract AuditRemediationTest is Test {
         shell.stake(1e18);
 
         // Flush should have activated — rewardRate non-zero again.
-        assertGt(
-            shell.rewardRate(),
-            0,
-            "aged sub-floor queue must flush via the escape hatch"
-        );
+        assertGt(shell.rewardRate(), 0, "aged sub-floor queue must flush via the escape hatch");
     }
 
     /// @dev Regression guard: above-floor queued rewards (e.g. deposited while

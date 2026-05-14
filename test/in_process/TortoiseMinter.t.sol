@@ -5,7 +5,9 @@ import "forge-std/Test.sol";
 import {MockInProcess1155} from "./mocks/MockInProcess1155.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {IMinter1155} from "../../src/in_process/interfaces/IMinter1155.sol";
-import {ILimitedMintPerAddressErrors} from "../../src/in_process/interfaces/ILimitedMintPerAddress.sol";
+import {
+    ILimitedMintPerAddressErrors
+} from "../../src/in_process/interfaces/ILimitedMintPerAddress.sol";
 import {TortoiseMinter} from "../../src/in_process/minters/erc20/TortoiseMinter.sol";
 import {ITortoiseMinter} from "../../src/in_process/interfaces/ITortoiseMinter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -25,12 +27,12 @@ contract TortoiseMinterTest is Test {
 
     uint256 internal constant TOTAL_REWARD_PCT = 5;
     uint256 immutable BPS_TO_PERCENT = 100;
-    uint256 internal constant CREATE_REFERRAL_PAID_MINT_REWARD_PCT = 28_571400;
-    uint256 internal constant MINT_REFERRAL_PAID_MINT_REWARD_PCT = 28_571400;
-    uint256 internal constant IN_PROCESS_PAID_MINT_REWARD_PCT = 28_571400;
-    uint256 internal constant FIRST_MINTER_REWARD_PCT = 14_228500;
+    uint256 internal constant CREATE_REFERRAL_PAID_MINT_REWARD_PCT = 28_571_400;
+    uint256 internal constant MINT_REFERRAL_PAID_MINT_REWARD_PCT = 28_571_400;
+    uint256 internal constant IN_PROCESS_PAID_MINT_REWARD_PCT = 28_571_400;
+    uint256 internal constant FIRST_MINTER_REWARD_PCT = 14_228_500;
     uint256 immutable BPS_TO_PERCENT_8_DECIMAL_PERCISION = 100_000_000;
-    uint256 internal constant ethReward = 0.000111 ether;
+    uint256 internal constant ethReward = 0.000_111 ether;
 
     event ERC20RewardsDeposit(
         address indexed createReferral,
@@ -50,7 +52,13 @@ contract TortoiseMinterTest is Test {
 
     event OwnerSet(address indexed prevOwner, address indexed owner);
 
-    event MintComment(address indexed sender, address indexed tokenContract, uint256 indexed tokenId, uint256 quantity, string comment);
+    event MintComment(
+        address indexed sender,
+        address indexed tokenContract,
+        uint256 indexed tokenId,
+        uint256 quantity,
+        string comment
+    );
 
     function setUp() external {
         inProcess = makeAddr("inProcess");
@@ -76,7 +84,9 @@ contract TortoiseMinterTest is Test {
         TortoiseMinter minterContract
     ) internal returns (uint256) {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", quantity, createReferral);
+        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
+            "https://in-process.xyz/testing/token.json", quantity, createReferral
+        );
         target.addPermission(newTokenId, address(minterContract), target.PERMISSION_BIT_MINTER());
         target.callSale(
             newTokenId,
@@ -177,7 +187,9 @@ contract TortoiseMinterTest is Test {
 
     function test_TortoiseMinterRevertIfFundsRecipientAddressZero() external {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
+        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
+            "https://in-process.xyz/testing/token.json", 1, createReferral
+        );
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
 
         bytes memory minterError = abi.encodeWithSignature("AddressZero()");
@@ -203,7 +215,9 @@ contract TortoiseMinterTest is Test {
 
     function test_TortoiseMinterRevertIfCurrencyZero() external {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
+        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
+            "https://in-process.xyz/testing/token.json", 1, createReferral
+        );
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
 
         bytes memory minterError = abi.encodeWithSignature("AddressZero()");
@@ -233,7 +247,9 @@ contract TortoiseMinterTest is Test {
         vm.deal(tokenRecipient, ethReward);
 
         vm.expectRevert(abi.encodeWithSignature("InvalidCurrency()"));
-        minter.mint{value: ethReward}(tokenRecipient, 1, address(target), 1, 1, makeAddr("0x123"), address(0), "");
+        minter.mint{value: ethReward}(
+            tokenRecipient, 1, address(target), 1, 1, makeAddr("0x123"), address(0), ""
+        );
     }
 
     function test_TortoiseMinterRequestMintInvalid() external {
@@ -242,15 +258,17 @@ contract TortoiseMinterTest is Test {
     }
 
     function test_TortoiseMinterComputePaidMintRewards() external view {
-        uint256 totalValue = 500000000000000000; // 0.5 when converted from wei
-        TortoiseMinter.RewardsSettings memory rewardsSettings = minter.computePaidMintRewards(totalValue);
+        uint256 totalValue = 500_000_000_000_000_000; // 0.5 when converted from wei
+        TortoiseMinter.RewardsSettings memory rewardsSettings =
+            minter.computePaidMintRewards(totalValue);
 
-        assertEq(rewardsSettings.createReferralReward, 142857000000000000);
-        assertEq(rewardsSettings.mintReferralReward, 142857000000000000);
-        assertEq(rewardsSettings.firstMinterReward, 71142500000000000);
-        assertEq(rewardsSettings.inProcessReward, 143143500000000000);
+        assertEq(rewardsSettings.createReferralReward, 142_857_000_000_000_000);
+        assertEq(rewardsSettings.mintReferralReward, 142_857_000_000_000_000);
+        assertEq(rewardsSettings.firstMinterReward, 71_142_500_000_000_000);
+        assertEq(rewardsSettings.inProcessReward, 143_143_500_000_000_000);
         assertEq(
-            rewardsSettings.createReferralReward + rewardsSettings.mintReferralReward + rewardsSettings.inProcessReward + rewardsSettings.firstMinterReward,
+            rewardsSettings.createReferralReward + rewardsSettings.mintReferralReward
+                + rewardsSettings.inProcessReward + rewardsSettings.firstMinterReward,
             totalValue
         );
     }
@@ -258,7 +276,8 @@ contract TortoiseMinterTest is Test {
     function test_TortoiseMinterSaleFlow() external {
         uint96 pricePerToken = 10_000;
         uint256 quantity = 2;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         vm.deal(tokenRecipient, 1 ether);
         vm.prank(admin);
@@ -284,26 +303,25 @@ contract TortoiseMinterTest is Test {
         vm.stopPrank();
 
         assertEq(target.balanceOf(tokenRecipient, newTokenId), quantity);
-        assertEq(currency.balanceOf(fundsRecipient), 19000);
+        assertEq(currency.balanceOf(fundsRecipient), 19_000);
         assertEq(currency.balanceOf(address(inProcess)), 288);
         assertEq(currency.balanceOf(mintReferral), 285);
         assertEq(currency.balanceOf(admin), 142);
         assertEq(currency.balanceOf(createReferral), 285);
         assertEq(
-            currency.balanceOf(address(inProcess)) +
-                currency.balanceOf(fundsRecipient) +
-                currency.balanceOf(mintReferral) +
-                currency.balanceOf(admin) +
-                currency.balanceOf(createReferral),
+            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
+                + currency.balanceOf(mintReferral) + currency.balanceOf(admin)
+                + currency.balanceOf(createReferral),
             totalValue
         );
         assertEq(address(inProcess).balance, ethReward * quantity);
     }
 
     function test_TortoiseMinterSaleWithRewardsAddresses() external {
-        uint96 pricePerToken = 100000000000000000; // 0.1 when converted from wei
+        uint96 pricePerToken = 100_000_000_000_000_000; // 0.1 when converted from wei
         uint256 quantity = 5;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         vm.deal(tokenRecipient, ethReward * quantity);
         vm.prank(admin);
@@ -327,22 +345,25 @@ contract TortoiseMinterTest is Test {
         vm.stopPrank();
 
         assertEq(target.balanceOf(tokenRecipient, newTokenId), quantity);
-        assertEq(currency.balanceOf(fundsRecipient), 475000000000000000);
-        assertEq(currency.balanceOf(address(inProcess)), 7157175000000000);
-        assertEq(currency.balanceOf(createReferral), 7142850000000000);
-        assertEq(currency.balanceOf(mintReferral), 7142850000000000);
+        assertEq(currency.balanceOf(fundsRecipient), 475_000_000_000_000_000);
+        assertEq(currency.balanceOf(address(inProcess)), 7_157_175_000_000_000);
+        assertEq(currency.balanceOf(createReferral), 7_142_850_000_000_000);
+        assertEq(currency.balanceOf(mintReferral), 7_142_850_000_000_000);
         assertEq(
-            currency.balanceOf(address(inProcess)) +
-                currency.balanceOf(fundsRecipient) +
-                currency.balanceOf(createReferral) +
-                currency.balanceOf(mintReferral) +
-                currency.balanceOf(admin),
+            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
+                + currency.balanceOf(createReferral) + currency.balanceOf(mintReferral)
+                + currency.balanceOf(admin),
             totalValue
         );
         assertEq(address(inProcess).balance, ethReward * quantity);
     }
 
-    function test_TortoiseMinterSaleFuzz(uint96 pricePerToken, uint256 quantity, uint8 rewardPct, uint256 inProcessEthReward) external {
+    function test_TortoiseMinterSaleFuzz(
+        uint96 pricePerToken,
+        uint256 quantity,
+        uint8 rewardPct,
+        uint256 inProcessEthReward
+    ) external {
         vm.assume(quantity > 0 && quantity < 1_000_000_000);
         vm.assume(pricePerToken > 10_000 && pricePerToken < type(uint96).max);
         vm.assume(rewardPct > 0 && rewardPct < 100);
@@ -351,7 +372,8 @@ contract TortoiseMinterTest is Test {
         TortoiseMinter newMinter = new TortoiseMinter();
         newMinter.initialize(address(inProcess), owner, rewardPct, inProcessEthReward);
 
-        uint256 tokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, newMinter);
+        uint256 tokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, newMinter);
 
         vm.prank(admin);
         uint256 totalValue = pricePerToken * quantity;
@@ -361,10 +383,14 @@ contract TortoiseMinterTest is Test {
         currency.approve(address(newMinter), totalValue);
 
         uint256 reward = (totalValue * rewardPct) / BPS_TO_PERCENT;
-        uint256 createReferralReward = (reward * CREATE_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 mintReferralReward = (reward * MINT_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 firstMinterReward = (reward * FIRST_MINTER_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-        uint256 inProcessReward = reward - (createReferralReward + mintReferralReward + firstMinterReward);
+        uint256 createReferralReward =
+            (reward * CREATE_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
+        uint256 mintReferralReward =
+            (reward * MINT_REFERRAL_PAID_MINT_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
+        uint256 firstMinterReward =
+            (reward * FIRST_MINTER_REWARD_PCT) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
+        uint256 inProcessReward =
+            reward - (createReferralReward + mintReferralReward + firstMinterReward);
 
         vm.startPrank(tokenRecipient);
         vm.expectEmit(true, true, true, true);
@@ -384,7 +410,16 @@ contract TortoiseMinterTest is Test {
         vm.deal(tokenRecipient, inProcessEthReward * quantity);
 
         uint256 amount = pricePerToken * quantity;
-        newMinter.mint{value: inProcessEthReward * quantity}(tokenRecipient, quantity, address(target), tokenId, amount, address(currency), mintReferral, "");
+        newMinter.mint{value: inProcessEthReward * quantity}(
+            tokenRecipient,
+            quantity,
+            address(target),
+            tokenId,
+            amount,
+            address(currency),
+            mintReferral,
+            ""
+        );
         vm.stopPrank();
 
         assertEq(target.balanceOf(tokenRecipient, tokenId), quantity);
@@ -392,13 +427,15 @@ contract TortoiseMinterTest is Test {
         assertEq(currency.balanceOf(createReferral), createReferralReward);
         assertEq(currency.balanceOf(mintReferral), mintReferralReward);
         assertEq(currency.balanceOf(admin), firstMinterReward);
-        assertEq(currency.balanceOf(address(inProcess)) + currency.balanceOf(mintReferral) + currency.balanceOf(admin) + currency.balanceOf(createReferral), reward);
         assertEq(
-            currency.balanceOf(address(inProcess)) +
-                currency.balanceOf(fundsRecipient) +
-                currency.balanceOf(createReferral) +
-                currency.balanceOf(mintReferral) +
-                currency.balanceOf(admin),
+            currency.balanceOf(address(inProcess)) + currency.balanceOf(mintReferral)
+                + currency.balanceOf(admin) + currency.balanceOf(createReferral),
+            reward
+        );
+        assertEq(
+            currency.balanceOf(address(inProcess)) + currency.balanceOf(fundsRecipient)
+                + currency.balanceOf(createReferral) + currency.balanceOf(mintReferral)
+                + currency.balanceOf(admin),
             totalValue
         );
         assertEq(address(inProcess).balance, inProcessEthReward * quantity);
@@ -406,7 +443,9 @@ contract TortoiseMinterTest is Test {
 
     function test_TortoiseMinterCreateReferral() public {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewTokenWithCreateReferral("https://in-process.xyz/testing/token.json", 1, createReferral);
+        uint256 newTokenId = target.setupNewTokenWithCreateReferral(
+            "https://in-process.xyz/testing/token.json", 1, createReferral
+        );
         target.addPermission(newTokenId, address(minter), target.PERMISSION_BIT_MINTER());
         vm.stopPrank();
 
@@ -422,7 +461,8 @@ contract TortoiseMinterTest is Test {
         uint256 quantity = 11;
         uint256 totalValue = pricePerToken * quantity;
 
-        uint256 tokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 tokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
         address collector = makeAddr("collector");
 
         vm.prank(admin);
@@ -432,7 +472,16 @@ contract TortoiseMinterTest is Test {
 
         vm.startPrank(collector);
         currency.approve(address(minter), totalValue);
-        minter.mint{value: ethReward * quantity}(collector, quantity, address(target), tokenId, totalValue, address(currency), address(0), "");
+        minter.mint{value: ethReward * quantity}(
+            collector,
+            quantity,
+            address(target),
+            tokenId,
+            totalValue,
+            address(currency),
+            address(0),
+            ""
+        );
         vm.stopPrank();
 
         address firstMinter = minter.getFirstMinter(address(target), tokenId);
@@ -478,7 +527,9 @@ contract TortoiseMinterTest is Test {
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_ERC20SetRewardRecipientPercentage(uint256 percentageFuzz) public {
+    function test_ERC20SetRewardRecipientPercentage(
+        uint256 percentageFuzz
+    ) public {
         vm.assume(percentageFuzz > 0 && percentageFuzz < 100);
 
         vm.prank(owner);
@@ -492,12 +543,18 @@ contract TortoiseMinterTest is Test {
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        newConfig = ITortoiseMinter.TortoiseMinterConfig({inProcessRewardRecipientAddress: inProcess, rewardRecipientPercentage: percentageFuzz, ethReward: ethReward});
+        newConfig = ITortoiseMinter.TortoiseMinterConfig({
+            inProcessRewardRecipientAddress: inProcess,
+            rewardRecipientPercentage: percentageFuzz,
+            ethReward: ethReward
+        });
         emit TortoiseMinterConfigSet(newConfig);
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_TortoiseMinterSetEthReward(uint256 ethRewardFuzz) public {
+    function test_TortoiseMinterSetEthReward(
+        uint256 ethRewardFuzz
+    ) public {
         vm.assume(ethRewardFuzz >= 0 ether && ethRewardFuzz < 10 ether);
 
         vm.prank(owner);
@@ -532,12 +589,15 @@ contract TortoiseMinterTest is Test {
         minter.setTortoiseMinterConfig(newConfig);
     }
 
-    function test_TortoiseMinterEthRewardTooLow(uint256 ethRewardLow) public {
-        vm.assume(ethRewardLow >= 0 ether && ethRewardLow < 0.000111 ether);
+    function test_TortoiseMinterEthRewardTooLow(
+        uint256 ethRewardLow
+    ) public {
+        vm.assume(ethRewardLow >= 0 ether && ethRewardLow < 0.000_111 ether);
 
         uint96 pricePerToken = 10_000;
         uint256 quantity = 2;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         vm.deal(tokenRecipient, 1 ether);
         vm.prank(admin);
@@ -550,8 +610,21 @@ contract TortoiseMinterTest is Test {
         vm.deal(tokenRecipient, ethRewardLow);
 
         vm.startPrank(tokenRecipient);
-        vm.expectRevert(abi.encodeWithSelector(ITortoiseMinter.InvalidETHValue.selector, 0.000111 ether * quantity, ethRewardLow));
-        minter.mint{value: ethRewardLow}(tokenRecipient, quantity, address(target), newTokenId, pricePerToken * quantity, address(currency), mintReferral, "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITortoiseMinter.InvalidETHValue.selector, 0.000_111 ether * quantity, ethRewardLow
+            )
+        );
+        minter.mint{value: ethRewardLow}(
+            tokenRecipient,
+            quantity,
+            address(target),
+            newTokenId,
+            pricePerToken * quantity,
+            address(currency),
+            mintReferral,
+            ""
+        );
         vm.stopPrank();
     }
 
@@ -559,7 +632,7 @@ contract TortoiseMinterTest is Test {
         ITortoiseMinter.PremintSalesConfig memory newConfig = ITortoiseMinter.PremintSalesConfig({
             duration: 3000,
             maxTokensPerAddress: 200,
-            pricePerToken: 50000,
+            pricePerToken: 50_000,
             fundsRecipient: makeAddr("fundsRecipient"),
             currency: makeAddr("currency")
         });

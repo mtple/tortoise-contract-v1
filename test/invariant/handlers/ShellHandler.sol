@@ -43,7 +43,10 @@ contract ShellHandler is Test {
         }
     }
 
-    function stake(uint256 stakerSeed, uint256 amount) external {
+    function stake(
+        uint256 stakerSeed,
+        uint256 amount
+    ) external {
         address staker = stakers[stakerSeed % stakers.length];
         amount = bound(amount, 1e18, 10_000e18);
 
@@ -56,10 +59,15 @@ contract ShellHandler is Test {
         try shell.stake(amount) {} catch {}
     }
 
-    function withdraw(uint256 stakerSeed, uint256 amount) external {
+    function withdraw(
+        uint256 stakerSeed,
+        uint256 amount
+    ) external {
         address staker = stakers[stakerSeed % stakers.length];
         uint256 balance = shell.stakedBalance(staker);
-        if (balance == 0) return;
+        if (balance == 0) {
+            return;
+        }
 
         amount = bound(amount, 1, balance);
 
@@ -67,7 +75,9 @@ contract ShellHandler is Test {
         try shell.withdraw(amount) {} catch {}
     }
 
-    function depositRewards(uint256 amount) external {
+    function depositRewards(
+        uint256 amount
+    ) external {
         // Lower bound = 1 base unit to exercise sub-REWARD_SCALAR dust path.
         amount = bound(amount, 1, 100_000e6);
 
@@ -77,7 +87,10 @@ contract ShellHandler is Test {
         vm.stopPrank();
     }
 
-    function creditStake(uint256 stakerSeed, uint256 quantity) external {
+    function creditStake(
+        uint256 stakerSeed,
+        uint256 quantity
+    ) external {
         address staker = stakers[stakerSeed % stakers.length];
         quantity = bound(quantity, 1, 10);
 
@@ -90,22 +103,30 @@ contract ShellHandler is Test {
         try shell.creditStake(staker, quantity) {} catch {}
     }
 
-    function claimRewards(uint256 stakerSeed) external {
+    function claimRewards(
+        uint256 stakerSeed
+    ) external {
         address staker = stakers[stakerSeed % stakers.length];
 
         vm.prank(staker);
         try shell.claimRewards() {} catch {}
     }
 
-    function emergencyWithdraw(uint256 stakerSeed) external {
+    function emergencyWithdraw(
+        uint256 stakerSeed
+    ) external {
         address staker = stakers[stakerSeed % stakers.length];
-        if (shell.stakedBalance(staker) == 0) return;
+        if (shell.stakedBalance(staker) == 0) {
+            return;
+        }
 
         vm.prank(staker);
         try shell.emergencyWithdraw() {} catch {}
     }
 
-    function warpTime(uint256 seconds_) external {
+    function warpTime(
+        uint256 seconds_
+    ) external {
         seconds_ = bound(seconds_, 1, 7 days);
         vm.warp(block.timestamp + seconds_);
     }
@@ -117,7 +138,9 @@ contract ShellHandler is Test {
     /// the existing invariant_tortPoolAccountingConsistent asserts against
     /// a fixed totalTortFunded captured at setUp, and adding mid-run funding
     /// would require widening that ghost — out of Phase B's scope budget.
-    function togglePause(uint256 seed) external {
+    function togglePause(
+        uint256 seed
+    ) external {
         vm.prank(owner);
         if (seed % 2 == 0) {
             try shell.pause() {} catch {}
@@ -130,7 +153,9 @@ contract ShellHandler is Test {
         return allStakers.length;
     }
 
-    function getStakerAt(uint256 index) external view returns (address) {
+    function getStakerAt(
+        uint256 index
+    ) external view returns (address) {
         return allStakers[index];
     }
 }

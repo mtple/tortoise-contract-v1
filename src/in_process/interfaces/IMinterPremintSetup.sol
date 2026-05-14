@@ -5,5 +5,8 @@ pragma solidity ^0.8.17;
 interface IMinterPremintSetup {
     /// Sets the sales config for a token based on the premint sales config, which's values
     /// are to be decoded by the corresponding minter.
-    function setPremintSale(uint256 tokenId, bytes calldata premintSalesConfig) external;
+    function setPremintSale(
+        uint256 tokenId,
+        bytes calldata premintSalesConfig
+    ) external;
 }

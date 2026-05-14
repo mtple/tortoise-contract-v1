@@ -45,7 +45,10 @@ contract TortoiseHandler is Test {
         }
     }
 
-    function createSong(uint256 artistSeed, uint128 price) external {
+    function createSong(
+        uint256 artistSeed,
+        uint128 price
+    ) external {
         address artist = artists[artistSeed % artists.length];
         price = uint128(bound(price, 100_000, 10_000_000)); // MIN_SONG_PRICE
 
@@ -54,8 +57,14 @@ contract TortoiseHandler is Test {
         songIds.push(songId);
     }
 
-    function mintSong(uint256 songSeed, uint256 buyerSeed, uint256 quantity) external {
-        if (songIds.length == 0) return;
+    function mintSong(
+        uint256 songSeed,
+        uint256 buyerSeed,
+        uint256 quantity
+    ) external {
+        if (songIds.length == 0) {
+            return;
+        }
 
         uint256 songId = songIds[songSeed % songIds.length];
         address buyer = buyers[buyerSeed % buyers.length];
@@ -68,8 +77,13 @@ contract TortoiseHandler is Test {
         } catch {}
     }
 
-    function configureSplits(uint256 songSeed, uint96 splitPct) external {
-        if (songIds.length == 0) return;
+    function configureSplits(
+        uint256 songSeed,
+        uint96 splitPct
+    ) external {
+        if (songIds.length == 0) {
+            return;
+        }
 
         uint256 songId = songIds[songSeed % songIds.length];
         splitPct = uint96(bound(splitPct, 100, 9900));

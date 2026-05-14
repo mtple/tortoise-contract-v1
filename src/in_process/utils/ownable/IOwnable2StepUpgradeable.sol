@@ -8,7 +8,6 @@ interface IOwnable2StepUpgradeable {
     ///                                                          ///
     ///                            EVENTS                        ///
     ///                                                          ///
-
     /// @notice Emitted when ownership has been updated
     /// @param prevOwner The previous owner address
     /// @param newOwner The new owner address
@@ -49,11 +48,15 @@ interface IOwnable2StepUpgradeable {
 
     /// @notice Forces an ownership transfer
     /// @param newOwner The new owner address
-    function transferOwnership(address newOwner) external;
+    function transferOwnership(
+        address newOwner
+    ) external;
 
     /// @notice Initiates a two-step ownership transfer
     /// @param newOwner The new owner address
-    function safeTransferOwnership(address newOwner) external;
+    function safeTransferOwnership(
+        address newOwner
+    ) external;
 
     /// @notice Accepts an ownership transfer
     function acceptOwnership() external;

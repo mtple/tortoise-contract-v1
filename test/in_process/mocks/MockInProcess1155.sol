@@ -40,7 +40,10 @@ contract MockInProcess1155 is IInProcess1155 {
         return 4;
     }
 
-    function setupNewToken(string calldata, uint256) external returns (uint256 tokenId) {
+    function setupNewToken(
+        string calldata,
+        uint256
+    ) external returns (uint256 tokenId) {
         tokenId = ++tokenIdCounter;
         firstMinters[tokenId] = msg.sender;
         _creatorRewardRecipient[tokenId] = msg.sender;
@@ -57,21 +60,32 @@ contract MockInProcess1155 is IInProcess1155 {
         _creatorRewardRecipient[tokenId] = msg.sender;
     }
 
-    function addPermission(uint256 tokenId, address minter, uint256 permissionBit) external {
+    function addPermission(
+        uint256 tokenId,
+        address minter,
+        uint256 permissionBit
+    ) external {
         _permissions[tokenId][minter] = permissionBit;
     }
 
     /// @notice Forwards arbitrary calldata to a minter contract.
     /// On failure wraps the revert data as CallFailed(bytes) — matching
     /// the error shape the test suite expects from InProcess1155.
-    function callSale(uint256, address minter, bytes calldata data) external {
+    function callSale(
+        uint256,
+        address minter,
+        bytes calldata data
+    ) external {
         (bool success, bytes memory returnData) = minter.call(data);
         if (!success) {
             revert CallFailed(returnData);
         }
     }
 
-    function balanceOf(address account, uint256 tokenId) external view returns (uint256) {
+    function balanceOf(
+        address account,
+        uint256 tokenId
+    ) external view returns (uint256) {
         return _balances[account][tokenId];
     }
 
@@ -81,11 +95,18 @@ contract MockInProcess1155 is IInProcess1155 {
 
     /// @notice adminMint is called by TortoiseMinter after payment is processed.
     /// Updates balances and records the first minter if not yet set.
-    function adminMint(address recipient, uint256 tokenId, uint256 quantity, bytes memory) external override {
+    function adminMint(
+        address recipient,
+        uint256 tokenId,
+        uint256 quantity,
+        bytes memory
+    ) external override {
         _balances[recipient][tokenId] += quantity;
     }
 
-    function getCreatorRewardRecipient(uint256 tokenId) external view override returns (address) {
+    function getCreatorRewardRecipient(
+        uint256 tokenId
+    ) external view override returns (address) {
         return _creatorRewardRecipient[tokenId];
     }
 }

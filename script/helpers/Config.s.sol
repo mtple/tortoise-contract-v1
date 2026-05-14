@@ -9,13 +9,19 @@ contract Config is Script {
     address constant TORT_BASE = 0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6;
 
     function getUsdcAddress() internal view returns (address) {
-        if (block.chainid == 8453) return USDC_BASE;
-        if (block.chainid == 84532) return USDC_BASE_SEPOLIA;
+        if (block.chainid == 8453) {
+            return USDC_BASE;
+        }
+        if (block.chainid == 84_532) {
+            return USDC_BASE_SEPOLIA;
+        }
         revert("Unsupported chain");
     }
 
     function getTortAddress() internal view returns (address) {
-        if (block.chainid == 8453) return TORT_BASE;
+        if (block.chainid == 8453) {
+            return TORT_BASE;
+        }
         revert("TORT address not configured for this chain");
     }
 }

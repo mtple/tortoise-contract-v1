@@ -33,13 +33,8 @@ contract TortoiseV1Test is Test {
 
         shell = new TortoiseShell(address(tort), address(usdc), 604_800);
 
-        tortoise = new TortoiseV1(
-            address(usdc),
-            PLATFORM_FEE,
-            DEFAULT_PRICE,
-            address(shell),
-            STAKING_FEE
-        );
+        tortoise =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(shell), STAKING_FEE);
 
         // Register tortoise as authorized caller on shell
         shell.addAuthorizedCaller(address(tortoise));
@@ -68,9 +63,7 @@ contract TortoiseV1Test is Test {
     }
 
     function test_constructor_defaultValues() public {
-        TortoiseV1 t = new TortoiseV1(
-            address(usdc), 0, 0, address(0), 0
-        );
+        TortoiseV1 t = new TortoiseV1(address(usdc), 0, 0, address(0), 0);
         ContractConfig memory cfg = t.getConfig();
         assertEq(cfg.defaultSongPrice, 850_000);
         assertEq(cfg.platformFee, 50_000);
@@ -484,9 +477,8 @@ contract TortoiseV1Test is Test {
 
     function test_mintSong_noShellConfigured() public {
         // Deploy without shell
-        TortoiseV1 noShell = new TortoiseV1(
-            address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(0), 0
-        );
+        TortoiseV1 noShell =
+            new TortoiseV1(address(usdc), PLATFORM_FEE, DEFAULT_PRICE, address(0), 0);
 
         vm.prank(artist);
         uint256 songId = noShell.createSong("My Song", 0, 0, "ipfs://hash");
@@ -542,8 +534,7 @@ contract TortoiseV1Test is Test {
         vm.prank(artist);
         uint256 songId = tortoise.createSong("Fee Test", 0, 0, "ipfs://hash");
         assertEq(
-            tortoise.calculateTotalCost(songId, 1),
-            uint256(DEFAULT_PRICE) + PLATFORM_FEE + 100_000
+            tortoise.calculateTotalCost(songId, 1), uint256(DEFAULT_PRICE) + PLATFORM_FEE + 100_000
         );
     }
 
@@ -688,8 +679,7 @@ contract TortoiseV1Test is Test {
         uint256 songId = tortoise.createSong("My Song", 1_000_000, 0, "ipfs://hash");
 
         assertEq(
-            tortoise.calculateTotalCost(songId, 5),
-            (1_000_000 + PLATFORM_FEE + STAKING_FEE) * 5
+            tortoise.calculateTotalCost(songId, 5), (1_000_000 + PLATFORM_FEE + STAKING_FEE) * 5
         );
     }
 

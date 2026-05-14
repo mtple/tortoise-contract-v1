@@ -12,7 +12,11 @@ interface ICreatorRoyaltyErrors {
     error InvalidMintSchedule();
 }
 
-interface IInProcessCreator1155Errors is ICreatorRoyaltyErrors, ILimitedMintPerAddressErrors, IMinterErrors {
+interface IInProcessCreator1155Errors is
+    ICreatorRoyaltyErrors,
+    ILimitedMintPerAddressErrors,
+    IMinterErrors
+{
     error OnlyAllowedForTimedSaleStrategy();
     error OnlyAllowedForRegisteredMinter();
     error OnlyTransfersFromInProcessMints();
@@ -44,7 +48,9 @@ interface IInProcessCreator1155Errors is ICreatorRoyaltyErrors, ILimitedMintPerA
     error FundsWithdrawInsolvent(uint256 amount, uint256 contractValue);
     error ProtocolRewardsWithdrawFailed(address caller, address recipient, uint256 amount);
 
-    error CannotMintMoreTokens(uint256 tokenId, uint256 quantity, uint256 totalMinted, uint256 maxSupply);
+    error CannotMintMoreTokens(
+        uint256 tokenId, uint256 quantity, uint256 totalMinted, uint256 maxSupply
+    );
 
     error MintNotYetStarted();
     error PremintDeleted();

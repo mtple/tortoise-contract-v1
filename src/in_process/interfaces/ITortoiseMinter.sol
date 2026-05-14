@@ -84,7 +84,13 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// @param tokenId The token ID
     /// @param quantity The quantity of tokens minted
     /// @param comment The comment
-    event MintComment(address indexed sender, address indexed tokenContract, uint256 indexed tokenId, uint256 quantity, string comment);
+    event MintComment(
+        address indexed sender,
+        address indexed tokenContract,
+        uint256 indexed tokenId,
+        uint256 quantity,
+        string comment
+    );
 
     /// @notice SaleSet Event
     /// @param mediaContract The media contract address
@@ -154,17 +160,25 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// @notice Sets the sale config for a given token
     /// @param tokenId The ID of the token to set the sale config for
     /// @param salesConfig The sale config to set
-    function setSale(uint256 tokenId, SalesConfig memory salesConfig) external;
+    function setSale(
+        uint256 tokenId,
+        SalesConfig memory salesConfig
+    ) external;
 
     /// @notice Dynamically builds a SalesConfig from a PremintSalesConfig, taking into consideration the current block timestamp
     /// and the PremintSalesConfig's duration.
     /// @param config The PremintSalesConfig to build the SalesConfig from
-    function buildSalesConfigForPremint(PremintSalesConfig memory config) external view returns (SalesConfig memory);
+    function buildSalesConfigForPremint(
+        PremintSalesConfig memory config
+    ) external view returns (SalesConfig memory);
 
     /// @notice Returns the sale config for a given token
     /// @param tokenContract The TokenContract address
     /// @param tokenId The ID of the token to get the sale config for
-    function sale(address tokenContract, uint256 tokenId) external view returns (SalesConfig memory);
+    function sale(
+        address tokenContract,
+        uint256 tokenId
+    ) external view returns (SalesConfig memory);
 
     /// @notice Returns the reward recipient percentage
     function totalRewardPct() external view returns (uint256);
@@ -174,7 +188,9 @@ interface ITortoiseMinter is IMinterPremintSetup {
 
     /// @notice Sets the TortoiseMinterConfig
     /// @param config The TortoiseMinterConfig to set
-    function setTortoiseMinterConfig(TortoiseMinterConfig memory config) external;
+    function setTortoiseMinterConfig(
+        TortoiseMinterConfig memory config
+    ) external;
 
     /// @notice Gets the TortoiseMinterConfig
     function getTortoiseMinterConfig() external view returns (TortoiseMinterConfig memory);
@@ -184,5 +200,8 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// and saleEnd will be the current block timestamp + the duration in the PremintSalesConfig.
     /// @param tokenId The ID of the token to set the sale config for
     /// @param encodedPremintSalesConfig The abi encoded PremintSalesConfig
-    function setPremintSale(uint256 tokenId, bytes calldata encodedPremintSalesConfig) external override;
+    function setPremintSale(
+        uint256 tokenId,
+        bytes calldata encodedPremintSalesConfig
+    ) external override;
 }

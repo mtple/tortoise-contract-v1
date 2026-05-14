@@ -36,7 +36,13 @@ interface IProtocolRewards {
     /// @param reason Optional bytes4 reason for indexing
     /// @param amount Amount of deposit
     /// @param comment Optional user comment
-    event Deposit(address indexed from, address indexed to, bytes4 indexed reason, uint256 amount, string comment);
+    event Deposit(
+        address indexed from,
+        address indexed to,
+        bytes4 indexed reason,
+        uint256 amount,
+        string comment
+    );
 
     /// @notice Withdraw Event
     /// @param from From user
@@ -69,14 +75,23 @@ interface IProtocolRewards {
     /// @param to Address to deposit to
     /// @param to Reason system reason for deposit (used for indexing)
     /// @param comment Optional comment as reason for deposit
-    function deposit(address to, bytes4 why, string calldata comment) external payable;
+    function deposit(
+        address to,
+        bytes4 why,
+        string calldata comment
+    ) external payable;
 
     /// @notice Generic function to deposit ETH for multiple recipients, with an optional comment
     /// @param recipients recipients to send the amount to, array aligns with amounts
     /// @param amounts amounts to send to each recipient, array aligns with recipients
     /// @param reasons optional bytes4 hash for indexing
     /// @param comment Optional comment to include with mint
-    function depositBatch(address[] calldata recipients, uint256[] calldata amounts, bytes4[] calldata reasons, string calldata comment) external payable;
+    function depositBatch(
+        address[] calldata recipients,
+        uint256[] calldata amounts,
+        bytes4[] calldata reasons,
+        string calldata comment
+    ) external payable;
 
     /// @notice Used by Zora ERC-721 & ERC-1155 contracts to deposit protocol rewards
     /// @param creator Creator for NFT rewards
@@ -105,7 +120,10 @@ interface IProtocolRewards {
     /// @notice Withdraw protocol rewards
     /// @param to Withdraws from msg.sender to this address
     /// @param amount amount to withdraw
-    function withdraw(address to, uint256 amount) external;
+    function withdraw(
+        address to,
+        uint256 amount
+    ) external;
 
     /// @notice Execute a withdraw of protocol rewards via signature
     /// @param from Withdraw from this address
@@ -115,9 +133,19 @@ interface IProtocolRewards {
     /// @param v V component of signature
     /// @param r R component of signature
     /// @param s S component of signature
-    function withdrawWithSig(address from, address to, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
+    function withdrawWithSig(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
 
     /// @notice Get the balance of an account
     /// @param account The account to get the balance of
-    function balanceOf(address account) external view returns (uint256);
+    function balanceOf(
+        address account
+    ) external view returns (uint256);
 }

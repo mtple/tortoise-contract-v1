@@ -63,25 +63,33 @@ contract MintShellHandler is Test {
         songIds.push(tortoise.createSong("seed", 0, 0, "ipfs://s"));
     }
 
-    function _actor(uint256 seed) internal view returns (address) {
+    function _actor(
+        uint256 seed
+    ) internal view returns (address) {
         return actors[seed % actors.length];
     }
 
-    function _song(uint256 seed) internal view returns (uint256) {
+    function _song(
+        uint256 seed
+    ) internal view returns (uint256) {
         return songIds[seed % songIds.length];
     }
 
     // ----- V1 ops -----
 
-    function createSong(uint256 seed) external {
+    function createSong(
+        uint256 seed
+    ) external {
         uint256 ms = uint256(keccak256(abi.encode(seed, "supply"))) % 1000;
         vm.prank(artist);
-        songIds.push(
-            tortoise.createSong("s", 0, uint128(ms), "ipfs://x")
-        );
+        songIds.push(tortoise.createSong("s", 0, uint128(ms), "ipfs://x"));
     }
 
-    function mintSong(uint256 actorSeed, uint256 songSeed, uint256 qty) external {
+    function mintSong(
+        uint256 actorSeed,
+        uint256 songSeed,
+        uint256 qty
+    ) external {
         qty = bound(qty, 1, 5);
         address a = _actor(actorSeed);
         uint256 sid = _song(songSeed);
@@ -99,7 +107,10 @@ contract MintShellHandler is Test {
 
     // ----- Shell ops -----
 
-    function stake(uint256 actorSeed, uint256 amt) external {
+    function stake(
+        uint256 actorSeed,
+        uint256 amt
+    ) external {
         amt = bound(amt, 1e18, 1000e18);
         address a = _actor(actorSeed);
         vm.prank(a);
@@ -108,16 +119,23 @@ contract MintShellHandler is Test {
         } catch {}
     }
 
-    function withdraw(uint256 actorSeed, uint256 amt) external {
+    function withdraw(
+        uint256 actorSeed,
+        uint256 amt
+    ) external {
         address a = _actor(actorSeed);
         uint256 bal = shell.stakedBalance(a);
-        if (bal == 0) return;
+        if (bal == 0) {
+            return;
+        }
         amt = bound(amt, 1, bal);
         vm.prank(a);
         try shell.withdraw(amt) {} catch {}
     }
 
-    function claimRewards(uint256 actorSeed) external {
+    function claimRewards(
+        uint256 actorSeed
+    ) external {
         address a = _actor(actorSeed);
         uint256 before = usdc.balanceOf(a);
         vm.prank(a);
@@ -126,14 +144,20 @@ contract MintShellHandler is Test {
         } catch {}
     }
 
-    function emergencyWithdraw(uint256 actorSeed) external {
+    function emergencyWithdraw(
+        uint256 actorSeed
+    ) external {
         address a = _actor(actorSeed);
-        if (shell.stakedBalance(a) == 0) return;
+        if (shell.stakedBalance(a) == 0) {
+            return;
+        }
         vm.prank(a);
         try shell.emergencyWithdraw() {} catch {}
     }
 
-    function warp(uint256 t) external {
+    function warp(
+        uint256 t
+    ) external {
         t = bound(t, 1, 7 days);
         vm.warp(block.timestamp + t);
     }
@@ -141,7 +165,9 @@ contract MintShellHandler is Test {
     // ----- Phase B: admin surface -----
 
     /// @dev Pause/unpause the V1 contract. Invariants must hold across both.
-    function toggleV1Pause(uint256 seed) external {
+    function toggleV1Pause(
+        uint256 seed
+    ) external {
         vm.prank(owner);
         if (seed % 2 == 0) {
             try tortoise.pause() {} catch {}
@@ -151,7 +177,9 @@ contract MintShellHandler is Test {
     }
 
     /// @dev Pause/unpause the Shell contract. Invariants must hold across both.
-    function toggleShellPause(uint256 seed) external {
+    function toggleShellPause(
+        uint256 seed
+    ) external {
         vm.prank(owner);
         if (seed % 2 == 0) {
             try shell.pause() {} catch {}
@@ -174,7 +202,9 @@ contract MintShellHandler is Test {
         return actors.length;
     }
 
-    function actorAt(uint256 i) external view returns (address) {
+    function actorAt(
+        uint256 i
+    ) external view returns (address) {
         return actors[i];
     }
 }

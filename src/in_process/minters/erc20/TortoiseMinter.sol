@@ -20,7 +20,15 @@ import {Ownable2StepUpgradeable} from "../../utils/ownable/Ownable2StepUpgradeab
 /// @notice Allows for InProcess Mints to be purchased using ERC20 tokens
 /// @dev While this contract _looks_ like a minter, we need to be able to directly manage ERC20 tokens. Therefore, we need to establish minter permissions but instead of using the `requestMint` flow we directly request tokens to be minted in order to safely handle the incoming ERC20 tokens.
 /// @author @isabellasmallcombe
-contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, LimitedMintPerAddress, TortoiseMinterRewards, Initializable, Ownable2StepUpgradeable {
+contract TortoiseMinter is
+    ReentrancyGuard,
+    ITortoiseMinter,
+    SaleStrategy,
+    LimitedMintPerAddress,
+    TortoiseMinterRewards,
+    Initializable,
+    Ownable2StepUpgradeable
+{
     using SafeERC20 for IERC20;
 
     /// @notice The ERC20 minter configuration
@@ -32,48 +40,72 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
 
     /// @notice Initializes the contract with an InProcess rewards recipient address
     /// @dev Allows deterministic contract address, called on deploy
-    function initialize(address _inProcessRewardRecipientAddress, address _owner, uint256 _rewardPct, uint256 _ethReward) external initializer {
+    function initialize(
+        address _inProcessRewardRecipientAddress,
+        address _owner,
+        uint256 _rewardPct,
+        uint256 _ethReward
+    ) external initializer {
         __Ownable_init(_owner);
         _setTortoiseMinterConfig(
-            TortoiseMinterConfig({inProcessRewardRecipientAddress: _inProcessRewardRecipientAddress, rewardRecipientPercentage: _rewardPct, ethReward: _ethReward})
+            TortoiseMinterConfig({
+                inProcessRewardRecipientAddress: _inProcessRewardRecipientAddress,
+                rewardRecipientPercentage: _rewardPct,
+                ethReward: _ethReward
+            })
         );
     }
 
     /// @notice Computes the total reward value for a given amount of ERC20 tokens
     /// @param totalValue The total number of ERC20 tokens
-    function computeTotalReward(uint256 totalValue) public view returns (uint256) {
-        return (totalValue * minterConfig.rewardRecipientPercentage) / BPS_TO_PERCENT_2_DECIMAL_PERCISION;
+    function computeTotalReward(
+        uint256 totalValue
+    ) public view returns (uint256) {
+        return
+            (totalValue * minterConfig.rewardRecipientPercentage)
+                / BPS_TO_PERCENT_2_DECIMAL_PERCISION;
     }
 
     /// @notice Computes the rewards value given an amount and a reward percentage
     /// @param totalReward The total reward to be distributed
     /// @param rewardPct The percentage of the reward to be distributed
-    function computeReward(uint256 totalReward, uint256 rewardPct) public pure returns (uint256) {
+    function computeReward(
+        uint256 totalReward,
+        uint256 rewardPct
+    ) public pure returns (uint256) {
         return (totalReward * rewardPct) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
     }
 
     /// @notice Computes the rewards for an ERC20 mint
     /// @param totalReward The total reward to be distributed
-    function computePaidMintRewards(uint256 totalReward) public pure returns (RewardsSettings memory) {
-        uint256 createReferralReward = computeReward(totalReward, CREATE_REFERRAL_PAID_MINT_REWARD_PCT);
+    function computePaidMintRewards(
+        uint256 totalReward
+    ) public pure returns (RewardsSettings memory) {
+        uint256 createReferralReward =
+            computeReward(totalReward, CREATE_REFERRAL_PAID_MINT_REWARD_PCT);
         uint256 mintReferralReward = computeReward(totalReward, MINT_REFERRAL_PAID_MINT_REWARD_PCT);
         uint256 firstMinterReward = computeReward(totalReward, FIRST_MINTER_REWARD_PCT);
-        uint256 inProcessReward = totalReward - (createReferralReward + mintReferralReward + firstMinterReward);
+        uint256 inProcessReward =
+            totalReward - (createReferralReward + mintReferralReward + firstMinterReward);
 
-        return
-            RewardsSettings({
-                createReferralReward: createReferralReward,
-                mintReferralReward: mintReferralReward,
-                inProcessReward: inProcessReward,
-                firstMinterReward: firstMinterReward
-            });
+        return RewardsSettings({
+            createReferralReward: createReferralReward,
+            mintReferralReward: mintReferralReward,
+            inProcessReward: inProcessReward,
+            firstMinterReward: firstMinterReward
+        });
     }
 
     /// @notice Gets the create referral address for a given token
     /// @param tokenContract The address of the token contract
     /// @param tokenId The ID of the token
-    function getCreateReferral(address tokenContract, uint256 tokenId) public view returns (address createReferral) {
-        try IInProcess1155(tokenContract).createReferrals(tokenId) returns (address contractCreateReferral) {
+    function getCreateReferral(
+        address tokenContract,
+        uint256 tokenId
+    ) public view returns (address createReferral) {
+        try IInProcess1155(tokenContract).createReferrals(tokenId) returns (
+            address contractCreateReferral
+        ) {
             createReferral = contractCreateReferral;
         } catch {}
 
@@ -85,8 +117,13 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @notice Gets the first minter address for a given token
     /// @param tokenContract The address of the token contract
     /// @param tokenId The ID of the token
-    function getFirstMinter(address tokenContract, uint256 tokenId) public view returns (address firstMinter) {
-        try IInProcess1155(tokenContract).firstMinters(tokenId) returns (address contractFirstMinter) {
+    function getFirstMinter(
+        address tokenContract,
+        uint256 tokenId
+    ) public view returns (address firstMinter) {
+        try IInProcess1155(tokenContract).firstMinters(tokenId) returns (
+            address contractFirstMinter
+        ) {
             firstMinter = contractFirstMinter;
 
             if (firstMinter == address(0)) {
@@ -105,7 +142,10 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @notice Handles the incoming transfer of ERC20 tokens
     /// @param currency The address of the currency to use for the mint
     /// @param totalValue The total value of the mint
-    function _handleIncomingTransfer(address currency, uint256 totalValue) internal {
+    function _handleIncomingTransfer(
+        address currency,
+        uint256 totalValue
+    ) internal {
         uint256 beforeBalance = IERC20(currency).balanceOf(address(this));
         IERC20(currency).safeTransferFrom(msg.sender, address(this), totalValue);
         uint256 afterBalance = IERC20(currency).balanceOf(address(this));
@@ -121,7 +161,13 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @param tokenId The ID of the token to mint
     /// @param tokenAddress The address of the token to mint
     /// @param mintReferral The address of the mint referral
-    function _distributeRewards(uint256 totalReward, address currency, uint256 tokenId, address tokenAddress, address mintReferral) private {
+    function _distributeRewards(
+        uint256 totalReward,
+        address currency,
+        uint256 tokenId,
+        address tokenAddress,
+        address mintReferral
+    ) private {
         RewardsSettings memory settings = computePaidMintRewards(totalReward);
 
         address createReferral = getCreateReferral(tokenAddress, tokenId);
@@ -134,7 +180,8 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
         IERC20(currency).safeTransfer(createReferral, settings.createReferralReward);
         IERC20(currency).safeTransfer(firstMinter, settings.firstMinterReward);
         IERC20(currency).safeTransfer(mintReferral, settings.mintReferralReward);
-        IERC20(currency).safeTransfer(minterConfig.inProcessRewardRecipientAddress, settings.inProcessReward);
+        IERC20(currency)
+            .safeTransfer(minterConfig.inProcessRewardRecipientAddress, settings.inProcessReward);
 
         emit ERC20RewardsDeposit(
             createReferral,
@@ -153,8 +200,14 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
 
     /// @notice Distributes the ETH rewards to the InProcess rewards recipient
     /// @param ethSent The amount of ETH to distribute
-    function _distributeEthRewards(uint256 ethSent) private {
-        if (!TransferHelperUtils.safeSendETH(minterConfig.inProcessRewardRecipientAddress, ethSent, TransferHelperUtils.FUNDS_SEND_NORMAL_GAS_LIMIT)) {
+    function _distributeEthRewards(
+        uint256 ethSent
+    ) private {
+        if (!TransferHelperUtils.safeSendETH(
+                minterConfig.inProcessRewardRecipientAddress,
+                ethSent,
+                TransferHelperUtils.FUNDS_SEND_NORMAL_GAS_LIMIT
+            )) {
             revert FailedToSendEthReward();
         }
     }
@@ -201,7 +254,9 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
         }
 
         if (config.maxTokensPerAddress > 0) {
-            _requireMintNotOverLimitAndUpdate(config.maxTokensPerAddress, quantity, tokenAddress, tokenId, mintTo);
+            _requireMintNotOverLimitAndUpdate(
+                config.maxTokensPerAddress, quantity, tokenAddress, tokenId, mintTo
+            );
         }
 
         _handleIncomingTransfer(currency, totalValue);
@@ -249,7 +304,10 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @notice Sets the sale config for a given token
     /// @param tokenId The ID of the token to set the sale config for
     /// @param salesConfig The sale config to set
-    function setSale(uint256 tokenId, SalesConfig memory salesConfig) public {
+    function setSale(
+        uint256 tokenId,
+        SalesConfig memory salesConfig
+    ) public {
         _requireNotAddressZero(salesConfig.currency);
         _requireNotAddressZero(salesConfig.fundsRecipient);
 
@@ -266,18 +324,19 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @notice Dynamically builds a SalesConfig from a PremintSalesConfig taking into consideration the current block timestamp
     /// and the PremintSalesConfig's duration.
     /// @param config The PremintSalesConfig to build the SalesConfig from
-    function buildSalesConfigForPremint(PremintSalesConfig memory config) public view returns (TortoiseMinter.SalesConfig memory) {
+    function buildSalesConfigForPremint(
+        PremintSalesConfig memory config
+    ) public view returns (TortoiseMinter.SalesConfig memory) {
         uint64 saleStart = uint64(block.timestamp);
         uint64 saleEnd = config.duration == 0 ? type(uint64).max : saleStart + config.duration;
-        return
-            ITortoiseMinter.SalesConfig({
-                saleStart: saleStart,
-                saleEnd: saleEnd,
-                maxTokensPerAddress: config.maxTokensPerAddress,
-                pricePerToken: config.pricePerToken,
-                fundsRecipient: config.fundsRecipient,
-                currency: config.currency
-            });
+        return ITortoiseMinter.SalesConfig({
+            saleStart: saleStart,
+            saleEnd: saleEnd,
+            maxTokensPerAddress: config.maxTokensPerAddress,
+            pricePerToken: config.pricePerToken,
+            fundsRecipient: config.fundsRecipient,
+            currency: config.currency
+        });
     }
 
     /// @notice Sets the sales config based for the msg.sender on the tokenId from the abi encoded premint sales config by
@@ -285,8 +344,12 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// and saleEnd will be the current block timestamp + the duration in the PremintSalesConfig.
     /// @param tokenId The ID of the token to set the sale config for
     /// @param encodedPremintSalesConfig The abi encoded PremintSalesConfig
-    function setPremintSale(uint256 tokenId, bytes calldata encodedPremintSalesConfig) external override {
-        PremintSalesConfig memory premintSalesConfig = abi.decode(encodedPremintSalesConfig, (PremintSalesConfig));
+    function setPremintSale(
+        uint256 tokenId,
+        bytes calldata encodedPremintSalesConfig
+    ) external override {
+        PremintSalesConfig memory premintSalesConfig =
+            abi.decode(encodedPremintSalesConfig, (PremintSalesConfig));
         SalesConfig memory salesConfig = buildSalesConfigForPremint(premintSalesConfig);
 
         setSale(tokenId, salesConfig);
@@ -294,7 +357,9 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
 
     /// @notice Deletes the sale config for a given token
     /// @param tokenId The ID of the token to reset the sale config for
-    function resetSale(uint256 tokenId) external override {
+    function resetSale(
+        uint256 tokenId
+    ) external override {
         delete salesConfigs[msg.sender][tokenId];
 
         // Deleted sale emit event
@@ -304,28 +369,40 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
     /// @notice Returns the sale config for a given token
     /// @param tokenContract The TokenContract address
     /// @param tokenId The ID of the token to get the sale config for
-    function sale(address tokenContract, uint256 tokenId) external view returns (SalesConfig memory) {
+    function sale(
+        address tokenContract,
+        uint256 tokenId
+    ) external view returns (SalesConfig memory) {
         return salesConfigs[tokenContract][tokenId];
     }
 
     /// @notice IERC165 interface support
     /// @param interfaceId The interface ID to check
-    function supportsInterface(bytes4 interfaceId) public pure virtual override(LimitedMintPerAddress, SaleStrategy) returns (bool) {
-        return
-            super.supportsInterface(interfaceId) ||
-            LimitedMintPerAddress.supportsInterface(interfaceId) ||
-            SaleStrategy.supportsInterface(interfaceId) ||
-            interfaceId == type(IMinterPremintSetup).interfaceId;
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public pure virtual override(LimitedMintPerAddress, SaleStrategy) returns (bool) {
+        return super.supportsInterface(interfaceId)
+            || LimitedMintPerAddress.supportsInterface(interfaceId)
+            || SaleStrategy.supportsInterface(interfaceId)
+            || interfaceId == type(IMinterPremintSetup).interfaceId;
     }
 
     /// @notice Reverts as `requestMint` is not used in the ERC20 minter. Call `mint` instead.
-    function requestMint(address, uint256, uint256, uint256, bytes calldata) external pure returns (ICreatorCommands.CommandSet memory) {
+    function requestMint(
+        address,
+        uint256,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external pure returns (ICreatorCommands.CommandSet memory) {
         revert RequestMintInvalidUseMint();
     }
 
     /// @notice Sets the TortoiseMinterConfig
     /// @param _config The TortoiseMinterConfig to set
-    function _setTortoiseMinterConfig(TortoiseMinterConfig memory _config) internal {
+    function _setTortoiseMinterConfig(
+        TortoiseMinterConfig memory _config
+    ) internal {
         _requireNotAddressZero(_config.inProcessRewardRecipientAddress);
 
         if (_config.rewardRecipientPercentage > 100) {
@@ -338,13 +415,17 @@ contract TortoiseMinter is ReentrancyGuard, ITortoiseMinter, SaleStrategy, Limit
 
     /// @notice Sets the TortoiseMinterConfig
     /// @param config The TortoiseMinterConfig to set
-    function setTortoiseMinterConfig(TortoiseMinterConfig memory config) external onlyOwner {
+    function setTortoiseMinterConfig(
+        TortoiseMinterConfig memory config
+    ) external onlyOwner {
         _setTortoiseMinterConfig(config);
     }
 
     /// @notice Reverts if the address is address(0)
     /// @param _address The address to check
-    function _requireNotAddressZero(address _address) internal pure {
+    function _requireNotAddressZero(
+        address _address
+    ) internal pure {
         if (_address == address(0)) {
             revert AddressZero();
         }
