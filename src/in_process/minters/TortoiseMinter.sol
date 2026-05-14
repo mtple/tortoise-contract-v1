@@ -49,9 +49,7 @@ contract TortoiseMinter is
         __Ownable_init(_owner);
         _setTortoiseMinterConfig(
             TortoiseMinterConfig({
-                tortoiseShell: _tortoiseShell,
-                rewardToken: _rewardToken,
-                platformFee: _platformFee
+                tortoiseShell: _tortoiseShell, rewardToken: _rewardToken, platformFee: _platformFee
             })
         );
     }
@@ -156,21 +154,15 @@ contract TortoiseMinter is
         if (minterConfig.platformFee > 0 && minterConfig.tortoiseShell != address(0)) {
             totalFee = minterConfig.platformFee * quantity;
             _handleIncomingTransfer(minterConfig.rewardToken, totalFee);
-            (artistFeeAmount, torsAwarded) = _distributeFee(totalFee, config.fundsRecipient, mintTo, quantity);
+            (artistFeeAmount, torsAwarded) =
+                _distributeFee(totalFee, config.fundsRecipient, mintTo, quantity);
         }
 
         if (bytes(comment).length > 0) {
             emit MintComment(mintTo, tokenAddress, tokenId, quantity, comment);
         }
 
-        emit Collected(
-            config.fundsRecipient,
-            mintTo,
-            tokenAddress,
-            tokenId,
-            quantity,
-            torsAwarded
-        );
+        emit Collected(config.fundsRecipient, mintTo, tokenAddress, tokenId, quantity, torsAwarded);
     }
 
     /// @notice The URI of the contract

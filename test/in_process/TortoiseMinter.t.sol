@@ -19,11 +19,16 @@ contract MockTortoiseShell {
     uint256 public tortRewardPerCollection = 1e18;
     uint256 public tortPoolBalance = 1000e18;
 
-    function depositRewards(uint256 amount) external {
+    function depositRewards(
+        uint256 amount
+    ) external {
         depositedAmount += amount;
     }
 
-    function creditStake(address user, uint256 quantity) external returns (uint256) {
+    function creditStake(
+        address user,
+        uint256 quantity
+    ) external returns (uint256) {
         creditedUser = user;
         creditedQuantity += quantity;
         return quantity * tortRewardPerCollection;
@@ -48,7 +53,7 @@ contract TortoiseMinterTest is Test {
     ITortoiseMinter.TortoiseMinterConfig internal minterConfig;
 
     uint256 internal constant PLATFORM_FEE = 1_000_000; // 1 USDC (6 decimals)
-    uint256 internal constant TORTOISE_FEE_BPS = 2_500;
+    uint256 internal constant TORTOISE_FEE_BPS = 2500;
     uint256 internal constant BPS_DENOMINATOR = 10_000;
 
     event Collected(
@@ -59,7 +64,6 @@ contract TortoiseMinterTest is Test {
         uint256 quantity,
         uint256 torsAwarded
     );
-
 
     event TortoiseMinterConfigSet(ITortoiseMinter.TortoiseMinterConfig config);
 
@@ -96,7 +100,8 @@ contract TortoiseMinterTest is Test {
         TortoiseMinter minterContract
     ) internal returns (uint256) {
         vm.startPrank(admin);
-        uint256 newTokenId = target.setupNewToken("https://in-process.xyz/testing/token.json", quantity);
+        uint256 newTokenId =
+            target.setupNewToken("https://in-process.xyz/testing/token.json", quantity);
         target.addPermission(newTokenId, address(minterContract), target.PERMISSION_BIT_MINTER());
         target.callSale(
             newTokenId,
@@ -131,7 +136,10 @@ contract TortoiseMinterTest is Test {
         vm.startPrank(recipient);
         IERC20(saleCurrency).approve(minter_, totalValue);
         IERC20(address(rewardToken)).approve(minter_, totalFee);
-        TortoiseMinter(minter_).mint(recipient, quantity, tokenAddress, tokenId, totalValue, saleCurrency, address(0), "");
+        TortoiseMinter(minter_)
+            .mint(
+                recipient, quantity, tokenAddress, tokenId, totalValue, saleCurrency, address(0), ""
+            );
         vm.stopPrank();
     }
 
@@ -272,14 +280,16 @@ contract TortoiseMinterTest is Test {
         setUpTargetSale(10_000, fundsRecipient, address(currency), 1, minter);
 
         vm.expectRevert(abi.encodeWithSignature("InvalidCurrency()"));
-        minter.mint(tokenRecipient, 1, address(target), 1, 10_000, makeAddr("wrong"), address(0), "");
+        minter.mint(
+            tokenRecipient, 1, address(target), 1, 10_000, makeAddr("wrong"), address(0), ""
+        );
     }
 
     function test_RevertIfWrongValue() external {
         setUpTargetSale(10_000, fundsRecipient, address(currency), 1, minter);
 
         vm.expectRevert(abi.encodeWithSignature("WrongValueSent()"));
-        minter.mint(tokenRecipient, 1, address(target), 1, 9_999, address(currency), address(0), "");
+        minter.mint(tokenRecipient, 1, address(target), 1, 9999, address(currency), address(0), "");
     }
 
     function test_RequestMintInvalid() external {
@@ -290,7 +300,8 @@ contract TortoiseMinterTest is Test {
     function test_MintFlow() external {
         uint256 pricePerToken = 10_000;
         uint256 quantity = 2;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         uint256 totalValue = pricePerToken * quantity;
         uint256 totalFee = PLATFORM_FEE * quantity;
@@ -300,7 +311,16 @@ contract TortoiseMinterTest is Test {
         vm.prank(admin);
         rewardToken.mint(tokenRecipient, totalFee);
 
-        _approveAndMint(address(minter), tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), totalFee);
+        _approveAndMint(
+            address(minter),
+            tokenRecipient,
+            quantity,
+            address(target),
+            newTokenId,
+            totalValue,
+            address(currency),
+            totalFee
+        );
 
         // NFT minted
         assertEq(target.balanceOf(tokenRecipient, newTokenId), quantity);
@@ -323,7 +343,8 @@ contract TortoiseMinterTest is Test {
     function test_MintSplit25_75() external {
         uint256 pricePerToken = 10_000;
         uint256 quantity = 1;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         uint256 totalValue = pricePerToken * quantity;
         uint256 totalFee = PLATFORM_FEE * quantity; // 1_000_000
@@ -333,10 +354,19 @@ contract TortoiseMinterTest is Test {
         vm.prank(admin);
         rewardToken.mint(tokenRecipient, totalFee);
 
-        _approveAndMint(address(minter), tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), totalFee);
+        _approveAndMint(
+            address(minter),
+            tokenRecipient,
+            quantity,
+            address(target),
+            newTokenId,
+            totalValue,
+            address(currency),
+            totalFee
+        );
 
         uint256 tortoiseAmount = totalFee * TORTOISE_FEE_BPS / BPS_DENOMINATOR; // 250_000
-        uint256 artistFeeAmount = totalFee - tortoiseAmount;                      // 750_000
+        uint256 artistFeeAmount = totalFee - tortoiseAmount; // 750_000
 
         assertEq(rewardToken.balanceOf(address(shell)), tortoiseAmount);
         assertEq(rewardToken.balanceOf(fundsRecipient), artistFeeAmount);
@@ -346,7 +376,8 @@ contract TortoiseMinterTest is Test {
     function test_MintEmitsCollectedEvent() external {
         uint256 pricePerToken = 10_000;
         uint256 quantity = 1;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         uint256 totalValue = pricePerToken * quantity;
         uint256 totalFee = PLATFORM_FEE * quantity;
@@ -366,21 +397,26 @@ contract TortoiseMinterTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit Collected(
-            fundsRecipient,
+            fundsRecipient, tokenRecipient, address(target), newTokenId, quantity, torsAwarded
+        );
+        minter.mint(
             tokenRecipient,
+            quantity,
             address(target),
             newTokenId,
-            quantity,
-            torsAwarded
+            totalValue,
+            address(currency),
+            address(0),
+            ""
         );
-        minter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "");
         vm.stopPrank();
     }
 
     function test_MintEmitsCommentEvent() external {
         uint256 pricePerToken = 10_000;
         uint256 quantity = 1;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
+        uint256 newTokenId =
+            setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, minter);
 
         uint256 totalValue = pricePerToken;
         uint256 totalFee = PLATFORM_FEE;
@@ -396,7 +432,16 @@ contract TortoiseMinterTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit MintComment(tokenRecipient, address(target), newTokenId, quantity, "hello");
-        minter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "hello");
+        minter.mint(
+            tokenRecipient,
+            quantity,
+            address(target),
+            newTokenId,
+            totalValue,
+            address(currency),
+            address(0),
+            "hello"
+        );
         vm.stopPrank();
     }
 
@@ -407,7 +452,9 @@ contract TortoiseMinterTest is Test {
 
         uint256 pricePerToken = 10_000;
         uint256 quantity = 1;
-        uint256 newTokenId = setUpTargetSale(pricePerToken, fundsRecipient, address(currency), quantity, zeroFeeMinter);
+        uint256 newTokenId = setUpTargetSale(
+            pricePerToken, fundsRecipient, address(currency), quantity, zeroFeeMinter
+        );
 
         uint256 totalValue = pricePerToken;
         vm.prank(admin);
@@ -415,7 +462,16 @@ contract TortoiseMinterTest is Test {
 
         vm.startPrank(tokenRecipient);
         currency.approve(address(zeroFeeMinter), totalValue);
-        zeroFeeMinter.mint(tokenRecipient, quantity, address(target), newTokenId, totalValue, address(currency), address(0), "");
+        zeroFeeMinter.mint(
+            tokenRecipient,
+            quantity,
+            address(target),
+            newTokenId,
+            totalValue,
+            address(currency),
+            address(0),
+            ""
+        );
         vm.stopPrank();
 
         // No fee pulled, artist gets full sale price
@@ -459,9 +515,7 @@ contract TortoiseMinterTest is Test {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(0),
-            rewardToken: address(rewardToken),
-            platformFee: PLATFORM_FEE
+            tortoiseShell: address(0), rewardToken: address(rewardToken), platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }
@@ -470,9 +524,7 @@ contract TortoiseMinterTest is Test {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         ITortoiseMinter.TortoiseMinterConfig memory newConfig = ITortoiseMinter.TortoiseMinterConfig({
-            tortoiseShell: address(shell),
-            rewardToken: address(0),
-            platformFee: PLATFORM_FEE
+            tortoiseShell: address(shell), rewardToken: address(0), platformFee: PLATFORM_FEE
         });
         minter.setTortoiseMinterConfig(newConfig);
     }
