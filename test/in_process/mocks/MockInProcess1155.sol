@@ -3,7 +3,7 @@ pragma solidity ^0.8.17;
 
 import {IInProcess1155} from "../../../src/in_process/minters/erc20/IInProcess1155.sol";
 
-/// @notice Minimal mock replacing ZoraCreator1155Impl + Zora1155 proxy.
+/// @notice Minimal mock replacing the InProcess1155 implementation and proxy.
 /// Implements IInProcess1155 (called by TortoiseMinter) and the test-facing
 /// surface (setupNewToken, addPermission, callSale, balanceOf).
 ///
@@ -33,7 +33,7 @@ contract MockInProcess1155 is IInProcess1155 {
     mapping(uint256 => mapping(address => uint256)) private _permissions;
 
     // -------------------------------------------------------------------------
-    // Test-facing surface (mirrors ZoraCreator1155Impl API used by the tests)
+    // Test-facing surface (mirrors InProcess1155 API used by the tests)
     // -------------------------------------------------------------------------
 
     function PERMISSION_BIT_MINTER() external pure returns (uint256) {
@@ -63,7 +63,7 @@ contract MockInProcess1155 is IInProcess1155 {
 
     /// @notice Forwards arbitrary calldata to a minter contract.
     /// On failure wraps the revert data as CallFailed(bytes) — matching
-    /// the error shape the test suite expects from ZoraCreator1155Impl.
+    /// the error shape the test suite expects from InProcess1155.
     function callSale(uint256, address minter, bytes calldata data) external {
         (bool success, bytes memory returnData) = minter.call(data);
         if (!success) {

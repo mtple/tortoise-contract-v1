@@ -12,10 +12,10 @@ interface ICreatorRoyaltyErrors {
     error InvalidMintSchedule();
 }
 
-interface IZoraCreator1155Errors is ICreatorRoyaltyErrors, ILimitedMintPerAddressErrors, IMinterErrors {
+interface IInProcessCreator1155Errors is ICreatorRoyaltyErrors, ILimitedMintPerAddressErrors, IMinterErrors {
     error OnlyAllowedForTimedSaleStrategy();
     error OnlyAllowedForRegisteredMinter();
-    error OnlyTransfersFromZoraMints();
+    error OnlyTransfersFromInProcessMints();
     error Call_TokenIdMismatch();
     error TokenIdMismatch(uint256 expected, uint256 actual);
     error UserMissingRoleForToken(address user, uint256 tokenId, uint256 role);

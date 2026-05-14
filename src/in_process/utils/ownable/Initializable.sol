@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
-// Vendored from @zoralabs/openzeppelin-contracts-upgradeable (Zora's fork of OZ Upgradeable).
-// Preserves the Zora custom error name INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()
+// Vendored from @zoralabs/openzeppelin-contracts-upgradeable (InProcess/Zora fork of OZ Upgradeable).
+// Preserves the custom error name INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()
 // because the test suite checks for this exact error signature.
 // Standard OZ v4/v5 Initializable uses different error/revert strings — do not substitute.
 abstract contract Initializable {

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.17;
 
 interface IMinterErrors {
-    error CallerNotZoraCreator1155();
+    error CallerNotInProcessCreator1155();
     error MinterContractAlreadyExists();
     error MinterContractDoesNotExist();
 
