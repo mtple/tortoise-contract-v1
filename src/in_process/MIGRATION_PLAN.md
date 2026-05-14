@@ -490,7 +490,7 @@ Copy from `in-process-protocol/packages/shared-contracts/src/interfaces/`:
 - `errors/IZoraCreator1155Errors.sol` → `src/in_process/interfaces/shared/errors/`
 - `IMinter1155.sol` → `src/in_process/interfaces/shared/` (fix import paths)
 
-### Step 2 — Vendor the protocol-rewards interface
+### ✅ Step 2 — Vendor the protocol-rewards interface
 Copy from `in-process-protocol/packages/protocol-rewards/src/interfaces/`:
 - `IProtocolRewards.sol` → `src/in_process/utils/`
 
