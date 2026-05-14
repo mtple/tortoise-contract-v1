@@ -4,20 +4,20 @@ pragma solidity ^0.8.17;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IProtocolRewards} from "../../utils/IProtocolRewards.sol";
-import {ITortoiseMinter} from "../../interfaces/ITortoiseMinter.sol";
-import {IMinterPremintSetup} from "../../interfaces/IMinterPremintSetup.sol";
-import {LimitedMintPerAddress} from "../utils/LimitedMintPerAddress.sol";
-import {SaleStrategy} from "../SaleStrategy.sol";
-import {ICreatorCommands} from "../../interfaces/ICreatorCommands.sol";
+import {ITortoiseMinter} from "../interfaces/ITortoiseMinter.sol";
+import {IMinterPremintSetup} from "../interfaces/IMinterPremintSetup.sol";
+import {LimitedMintPerAddress} from "./utils/LimitedMintPerAddress.sol";
+import {SaleStrategy} from "./SaleStrategy.sol";
+import {ICreatorCommands} from "../interfaces/ICreatorCommands.sol";
 import {TortoiseMinterRewards} from "./TortoiseMinterRewards.sol";
-import {IInProcess1155} from "./IInProcess1155.sol";
-import {TransferHelperUtils} from "../../utils/TransferHelperUtils.sol";
-import {Initializable} from "../../utils/ownable/Initializable.sol";
-import {Ownable2StepUpgradeable} from "../../utils/ownable/Ownable2StepUpgradeable.sol";
+import {IInProcess1155} from "../interfaces/IInProcess1155.sol";
+import {Initializable} from "../utils/ownable/Initializable.sol";
+import {Ownable2StepUpgradeable} from "../utils/ownable/Ownable2StepUpgradeable.sol";
+import {ITortoiseShell} from "../../interfaces/ITortoiseShell.sol";
 
 /// @title TortoiseMinter
-/// @notice Allows for InProcess Mints to be purchased using ERC20 tokens
+/// @notice Allows for InProcess Mints to be purchased using ERC20 tokens, with a
+///         Tortoise platform fee split 25% to TortoiseShell and 75% to the artist.
 /// @dev While this contract _looks_ like a minter, we need to be able to directly manage ERC20 tokens. Therefore, we need to establish minter permissions but instead of using the `requestMint` flow we directly request tokens to be minted in order to safely handle the incoming ERC20 tokens.
 /// @author @isabellasmallcombe
 contract TortoiseMinter is
@@ -38,100 +38,17 @@ contract TortoiseMinter is
     /// @dev 1155 token address => 1155 token id => SalesConfig
     mapping(address => mapping(uint256 => SalesConfig)) internal salesConfigs;
 
-    /// @notice Initializes the contract with an InProcess rewards recipient address
+    /// @notice Initializes the contract
     /// @dev Allows deterministic contract address, called on deploy
     function initialize(
-        address _inProcessRewardRecipientAddress,
-        address _owner,
-        uint256 _rewardPct,
-        uint256 _ethReward
+        address _tortoiseShell,
+        uint256 _platformFee,
+        address _owner
     ) external initializer {
         __Ownable_init(_owner);
         _setTortoiseMinterConfig(
-            TortoiseMinterConfig({
-                inProcessRewardRecipientAddress: _inProcessRewardRecipientAddress,
-                rewardRecipientPercentage: _rewardPct,
-                ethReward: _ethReward
-            })
+            TortoiseMinterConfig({tortoiseShell: _tortoiseShell, platformFee: _platformFee})
         );
-    }
-
-    /// @notice Computes the total reward value for a given amount of ERC20 tokens
-    /// @param totalValue The total number of ERC20 tokens
-    function computeTotalReward(
-        uint256 totalValue
-    ) public view returns (uint256) {
-        return
-            (totalValue * minterConfig.rewardRecipientPercentage)
-                / BPS_TO_PERCENT_2_DECIMAL_PERCISION;
-    }
-
-    /// @notice Computes the rewards value given an amount and a reward percentage
-    /// @param totalReward The total reward to be distributed
-    /// @param rewardPct The percentage of the reward to be distributed
-    function computeReward(
-        uint256 totalReward,
-        uint256 rewardPct
-    ) public pure returns (uint256) {
-        return (totalReward * rewardPct) / BPS_TO_PERCENT_8_DECIMAL_PERCISION;
-    }
-
-    /// @notice Computes the rewards for an ERC20 mint
-    /// @param totalReward The total reward to be distributed
-    function computePaidMintRewards(
-        uint256 totalReward
-    ) public pure returns (RewardsSettings memory) {
-        uint256 createReferralReward =
-            computeReward(totalReward, CREATE_REFERRAL_PAID_MINT_REWARD_PCT);
-        uint256 mintReferralReward = computeReward(totalReward, MINT_REFERRAL_PAID_MINT_REWARD_PCT);
-        uint256 firstMinterReward = computeReward(totalReward, FIRST_MINTER_REWARD_PCT);
-        uint256 inProcessReward =
-            totalReward - (createReferralReward + mintReferralReward + firstMinterReward);
-
-        return RewardsSettings({
-            createReferralReward: createReferralReward,
-            mintReferralReward: mintReferralReward,
-            inProcessReward: inProcessReward,
-            firstMinterReward: firstMinterReward
-        });
-    }
-
-    /// @notice Gets the create referral address for a given token
-    /// @param tokenContract The address of the token contract
-    /// @param tokenId The ID of the token
-    function getCreateReferral(
-        address tokenContract,
-        uint256 tokenId
-    ) public view returns (address createReferral) {
-        try IInProcess1155(tokenContract).createReferrals(tokenId) returns (
-            address contractCreateReferral
-        ) {
-            createReferral = contractCreateReferral;
-        } catch {}
-
-        if (createReferral == address(0)) {
-            createReferral = minterConfig.inProcessRewardRecipientAddress;
-        }
-    }
-
-    /// @notice Gets the first minter address for a given token
-    /// @param tokenContract The address of the token contract
-    /// @param tokenId The ID of the token
-    function getFirstMinter(
-        address tokenContract,
-        uint256 tokenId
-    ) public view returns (address firstMinter) {
-        try IInProcess1155(tokenContract).firstMinters(tokenId) returns (
-            address contractFirstMinter
-        ) {
-            firstMinter = contractFirstMinter;
-
-            if (firstMinter == address(0)) {
-                firstMinter = IInProcess1155(tokenContract).getCreatorRewardRecipient(tokenId);
-            }
-        } catch {
-            firstMinter = minterConfig.inProcessRewardRecipientAddress;
-        }
     }
 
     /// @notice Gets the TortoiseMinterConfig
@@ -155,61 +72,25 @@ contract TortoiseMinter is
         }
     }
 
-    /// @notice Distributes the rewards to the appropriate addresses
-    /// @param totalReward The total reward to be distributed
-    /// @param currency The currency used for the mint
-    /// @param tokenId The ID of the token to mint
-    /// @param tokenAddress The address of the token to mint
-    /// @param mintReferral The address of the mint referral
-    function _distributeRewards(
-        uint256 totalReward,
-        address currency,
-        uint256 tokenId,
-        address tokenAddress,
-        address mintReferral
-    ) private {
-        RewardsSettings memory settings = computePaidMintRewards(totalReward);
+    /// @notice Distributes the Tortoise platform fee: 25% to TortoiseShell, 75% to artist
+    /// @return torsRewards Amount of TORS credited to the collector
+    function _distributeFee(
+        uint256 totalFee,
+        address fundsRecipient,
+        address mintTo,
+        uint256 quantity
+    ) private returns (uint256 torsRewards) {
+        uint256 tortoiseAmount = (totalFee * TORTOISE_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 artistFeeAmount = totalFee - tortoiseAmount;
 
-        address createReferral = getCreateReferral(tokenAddress, tokenId);
-        address firstMinter = getFirstMinter(tokenAddress, tokenId);
+        address shell = minterConfig.tortoiseShell;
+        address token = address(ITortoiseShell(shell).rewardToken());
 
-        if (mintReferral == address(0)) {
-            mintReferral = minterConfig.inProcessRewardRecipientAddress;
-        }
+        IERC20(token).safeTransfer(shell, tortoiseAmount);
+        ITortoiseShell(shell).depositRewards(tortoiseAmount);
+        torsRewards = ITortoiseShell(shell).creditStake(mintTo, quantity);
 
-        IERC20(currency).safeTransfer(createReferral, settings.createReferralReward);
-        IERC20(currency).safeTransfer(firstMinter, settings.firstMinterReward);
-        IERC20(currency).safeTransfer(mintReferral, settings.mintReferralReward);
-        IERC20(currency)
-            .safeTransfer(minterConfig.inProcessRewardRecipientAddress, settings.inProcessReward);
-
-        emit ERC20RewardsDeposit(
-            createReferral,
-            mintReferral,
-            firstMinter,
-            minterConfig.inProcessRewardRecipientAddress,
-            tokenAddress,
-            currency,
-            tokenId,
-            settings.createReferralReward,
-            settings.mintReferralReward,
-            settings.firstMinterReward,
-            settings.inProcessReward
-        );
-    }
-
-    /// @notice Distributes the ETH rewards to the InProcess rewards recipient
-    /// @param ethSent The amount of ETH to distribute
-    function _distributeEthRewards(
-        uint256 ethSent
-    ) private {
-        if (!TransferHelperUtils.safeSendETH(
-                minterConfig.inProcessRewardRecipientAddress,
-                ethSent,
-                TransferHelperUtils.FUNDS_SEND_NORMAL_GAS_LIMIT
-            )) {
-            revert FailedToSendEthReward();
-        }
+        IERC20(token).safeTransfer(fundsRecipient, artistFeeAmount);
     }
 
     /// @notice Mints a token using an ERC20 currency, note the total value must have been approved prior to calling this function
@@ -230,11 +111,7 @@ contract TortoiseMinter is
         address currency,
         address mintReferral,
         string calldata comment
-    ) external payable nonReentrant {
-        if (msg.value != minterConfig.ethReward * quantity) {
-            revert InvalidETHValue(minterConfig.ethReward * quantity, msg.value);
-        }
-
+    ) external nonReentrant {
         SalesConfig storage config = salesConfigs[tokenAddress][tokenId];
 
         if (config.currency == address(0) || config.currency != currency) {
@@ -259,41 +136,45 @@ contract TortoiseMinter is
             );
         }
 
+        // Calculate platform fee upfront
+        uint256 totalFee;
+        if (minterConfig.platformFee > 0 && minterConfig.tortoiseShell != address(0)) {
+            totalFee = minterConfig.platformFee * quantity;
+        }
+
+        // Pull all payments before any external calls
         _handleIncomingTransfer(currency, totalValue);
+        if (totalFee > 0) {
+            _handleIncomingTransfer(
+                address(ITortoiseShell(minterConfig.tortoiseShell).rewardToken()), totalFee
+            );
+        }
 
+        // Distribute: pay artist and split platform fee
+        IERC20(currency).safeTransfer(config.fundsRecipient, totalValue);
+        uint256 torsRewards;
+        if (totalFee > 0) {
+            torsRewards = _distributeFee(totalFee, config.fundsRecipient, mintTo, quantity);
+        }
+
+        // Mint NFT last — all payments verified and distributed
         IInProcess1155(tokenAddress).adminMint(mintTo, tokenId, quantity, "");
-
-        uint256 totalReward = computeTotalReward(totalValue);
-
-        _distributeRewards(totalReward, currency, tokenId, tokenAddress, mintReferral);
-
-        _distributeEthRewards(msg.value);
-
-        IERC20(config.currency).safeTransfer(config.fundsRecipient, totalValue - totalReward);
 
         if (bytes(comment).length > 0) {
             emit MintComment(mintTo, tokenAddress, tokenId, quantity, comment);
         }
-    }
 
-    /// @notice The percentage of the total value that is distributed as rewards
-    function totalRewardPct() external view returns (uint256) {
-        return minterConfig.rewardRecipientPercentage;
-    }
-
-    /// @notice The amount of ETH distributed as rewards
-    function ethRewardAmount() external view returns (uint256) {
-        return minterConfig.ethReward;
+        emit Collected(config.fundsRecipient, mintTo, tokenAddress, tokenId, quantity, torsRewards);
     }
 
     /// @notice The URI of the contract
     function contractURI() external pure returns (string memory) {
-        return "https://github.com/sweetmantech/in-process-protocol/";
+        return "";
     }
 
     /// @notice The name of the contract
     function contractName() external pure returns (string memory) {
-        return "ERC20 Minter";
+        return "Tortoise Minter";
     }
 
     /// @notice The version of the contract
@@ -399,26 +280,21 @@ contract TortoiseMinter is
     }
 
     /// @notice Sets the TortoiseMinterConfig
-    /// @param _config The TortoiseMinterConfig to set
-    function _setTortoiseMinterConfig(
-        TortoiseMinterConfig memory _config
-    ) internal {
-        _requireNotAddressZero(_config.inProcessRewardRecipientAddress);
-
-        if (_config.rewardRecipientPercentage > 100) {
-            revert InvalidValue();
-        }
-
-        minterConfig = _config;
-        emit TortoiseMinterConfigSet(_config);
-    }
-
-    /// @notice Sets the TortoiseMinterConfig
     /// @param config The TortoiseMinterConfig to set
     function setTortoiseMinterConfig(
         TortoiseMinterConfig memory config
     ) external onlyOwner {
         _setTortoiseMinterConfig(config);
+    }
+
+    /// @notice Internal setter for TortoiseMinterConfig
+    function _setTortoiseMinterConfig(
+        TortoiseMinterConfig memory _config
+    ) internal {
+        _requireNotAddressZero(_config.tortoiseShell);
+
+        minterConfig = _config;
+        emit TortoiseMinterConfigSet(_config);
     }
 
     /// @notice Reverts if the address is address(0)

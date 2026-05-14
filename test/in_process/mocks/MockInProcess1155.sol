@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
-import {IInProcess1155} from "../../../src/in_process/minters/erc20/IInProcess1155.sol";
+import {IInProcess1155} from "../../../src/in_process/interfaces/IInProcess1155.sol";
 
 /// @notice Minimal mock replacing the InProcess1155 implementation and proxy.
 /// Implements IInProcess1155 (called by TortoiseMinter) and the test-facing
