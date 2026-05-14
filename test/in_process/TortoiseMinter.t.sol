@@ -62,7 +62,7 @@ contract TortoiseMinterTest is Test {
         address indexed collection,
         uint256 tokenId,
         uint256 quantity,
-        uint256 torsAwarded
+        uint256 torsRewards
     );
 
     event TortoiseMinterConfigSet(ITortoiseMinter.TortoiseMinterConfig config);
@@ -393,11 +393,11 @@ contract TortoiseMinterTest is Test {
 
         uint256 tortoiseAmount = totalFee * TORTOISE_FEE_BPS / BPS_DENOMINATOR;
         uint256 artistFeeAmount = totalFee - tortoiseAmount;
-        uint256 torsAwarded = quantity * shell.tortRewardPerCollection();
+        uint256 torsRewards = quantity * shell.tortRewardPerCollection();
 
         vm.expectEmit(true, true, true, true);
         emit Collected(
-            fundsRecipient, tokenRecipient, address(target), newTokenId, quantity, torsAwarded
+            fundsRecipient, tokenRecipient, address(target), newTokenId, quantity, torsRewards
         );
         minter.mint(
             tokenRecipient,

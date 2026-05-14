@@ -47,14 +47,14 @@ interface ITortoiseMinter is IMinterPremintSetup {
     /// @param collection InProcess 1155 collection address
     /// @param tokenId Token ID
     /// @param quantity Number of tokens minted
-    /// @param torsAwarded TORS tokens credited to the collector
+    /// @param torsRewards TORS tokens credited to the collector
     event Collected(
         address indexed artist,
         address indexed collector,
         address indexed collection,
         uint256 tokenId,
         uint256 quantity,
-        uint256 torsAwarded
+        uint256 torsRewards
     );
 
     /// @notice MintComment Event

@@ -76,25 +76,22 @@ contract TortoiseMinter is
     }
 
     /// @notice Distributes the Tortoise platform fee: 25% to TortoiseShell, 75% to artist
-    /// @return artistFeeAmount Amount of rewardToken sent to artist
-    /// @return torsAwarded Amount of TORS airdropped to collector (0 if creditStake failed)
+    /// @return torsRewards Amount of TORS credited to the collector
     function _distributeFee(
         uint256 totalFee,
         address fundsRecipient,
         address mintTo,
         uint256 quantity
-    ) private returns (uint256 artistFeeAmount, uint256 torsAwarded) {
+    ) private returns (uint256 torsRewards) {
         uint256 tortoiseAmount = (totalFee * TORTOISE_FEE_BPS) / BPS_DENOMINATOR;
-        artistFeeAmount = totalFee - tortoiseAmount;
+        uint256 artistFeeAmount = totalFee - tortoiseAmount;
 
         address shell = minterConfig.tortoiseShell;
         address token = minterConfig.rewardToken;
 
         IERC20(token).safeTransfer(shell, tortoiseAmount);
-        try ITortoiseShell(shell).depositRewards(tortoiseAmount) {} catch {}
-        try ITortoiseShell(shell).creditStake(mintTo, quantity) returns (uint256 credited) {
-            torsAwarded = credited;
-        } catch {}
+        ITortoiseShell(shell).depositRewards(tortoiseAmount);
+        torsRewards = ITortoiseShell(shell).creditStake(mintTo, quantity);
 
         IERC20(token).safeTransfer(fundsRecipient, artistFeeAmount);
     }
@@ -142,27 +139,33 @@ contract TortoiseMinter is
             );
         }
 
-        // Pull sale payment and send to artist
-        _handleIncomingTransfer(currency, totalValue);
-        IInProcess1155(tokenAddress).adminMint(mintTo, tokenId, quantity, "");
-        IERC20(currency).safeTransfer(config.fundsRecipient, totalValue);
-
-        // Pull Tortoise platform fee and distribute 25/75
+        // Calculate platform fee upfront
         uint256 totalFee;
-        uint256 artistFeeAmount;
-        uint256 torsAwarded;
         if (minterConfig.platformFee > 0 && minterConfig.tortoiseShell != address(0)) {
             totalFee = minterConfig.platformFee * quantity;
-            _handleIncomingTransfer(minterConfig.rewardToken, totalFee);
-            (artistFeeAmount, torsAwarded) =
-                _distributeFee(totalFee, config.fundsRecipient, mintTo, quantity);
         }
+
+        // Pull all payments before any external calls
+        _handleIncomingTransfer(currency, totalValue);
+        if (totalFee > 0) {
+            _handleIncomingTransfer(minterConfig.rewardToken, totalFee);
+        }
+
+        // Distribute: pay artist and split platform fee
+        IERC20(currency).safeTransfer(config.fundsRecipient, totalValue);
+        uint256 torsRewards;
+        if (totalFee > 0) {
+            torsRewards = _distributeFee(totalFee, config.fundsRecipient, mintTo, quantity);
+        }
+
+        // Mint NFT last — all payments verified and distributed
+        IInProcess1155(tokenAddress).adminMint(mintTo, tokenId, quantity, "");
 
         if (bytes(comment).length > 0) {
             emit MintComment(mintTo, tokenAddress, tokenId, quantity, comment);
         }
 
-        emit Collected(config.fundsRecipient, mintTo, tokenAddress, tokenId, quantity, torsAwarded);
+        emit Collected(config.fundsRecipient, mintTo, tokenAddress, tokenId, quantity, torsRewards);
     }
 
     /// @notice The URI of the contract
