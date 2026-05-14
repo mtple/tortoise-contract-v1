@@ -33,12 +33,12 @@ for artists and a TORS airdrop for every collector.
 │   mint()                                                        │
 │   ├── validates SalesConfig (currency, price, timestamps)       │
 │   ├── pulls SalesConfig.currency × pricePerToken from buyer     │
-│   ├── calls InProcess1155.adminMint()                           │
+│   ├── pulls rewardToken × platformFee from buyer               │
 │   ├── sends 100% of sale price → fundsRecipient (artist)        │
-│   └── pulls rewardToken × platformFee from buyer               │
-│       ├── 25% → TortoiseShell.depositRewards()                  │
-│       ├── 75% → fundsRecipient (artist bonus)                   │
-│       └── TortoiseShell.creditStake(collector, quantity)        │
+│   ├── 25% of platformFee → TortoiseShell.depositRewards()       │
+│   ├── 75% of platformFee → fundsRecipient (artist bonus)        │
+│   ├── TortoiseShell.creditStake(collector, quantity)            │
+│   └── calls InProcess1155.adminMint()                           │
 └────────────────────────────┬────────────────────────────────────┘
                              │ authorized caller
                              ▼
@@ -103,8 +103,7 @@ Owner-settable global configuration:
 ```solidity
 struct TortoiseMinterConfig {
     address tortoiseShell;  // TortoiseShell contract address
-    address rewardToken;    // ERC20 token for platform fee (e.g. USDC)
-    uint256 platformFee;    // Fee per mint in rewardToken units
+    uint256 platformFee;    // Fee per mint, denominated in TortoiseShell.rewardToken()
 }
 ```
 
@@ -126,6 +125,6 @@ TortoiseShell.addAuthorizedCaller(address(tortoiseMinter));
 
 - **Tortoise fee is additive.** It is a separate payment on top of the NFT sale price,
   not a deduction from it.
-- **TortoiseShell integration is non-blocking.** `depositRewards()` and `creditStake()`
-  are wrapped in `try/catch` so any shell failure never prevents an NFT from being minted.
+- **TortoiseShell integration is blocking.** `depositRewards()` and `creditStake()`
+  are direct calls — if TortoiseShell reverts, the entire mint reverts.
 
