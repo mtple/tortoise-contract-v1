@@ -494,7 +494,7 @@ Copy from `in-process-protocol/packages/shared-contracts/src/interfaces/`:
 Copy from `in-process-protocol/packages/protocol-rewards/src/interfaces/`:
 - `IProtocolRewards.sol` → `src/in_process/utils/`
 
-### Step 3 — Write the Zora Initializable vendor file
+### ✅ Step 3 — Write the Zora Initializable vendor file
 Create `src/in_process/utils/ownable/Initializable.sol` from scratch.
 Must define `error INITIALIZABLE_CONTRACT_ALREADY_INITIALIZED()`.
 Modifiers needed: `initializer`, `onlyInitializing`.
