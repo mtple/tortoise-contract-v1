@@ -518,7 +518,7 @@ Copy from `in-process-protocol/packages/1155-contracts/src/utils/ownable/`:
 - `IMinter1155.sol` (local re-export) — update to point to shared/
 - `IERC20Minter.sol` — no changes
 
-### Step 7 — Copy and fix core ERC20Minter files
+### ✅ Step 7 — Copy and fix core ERC20Minter files
 - `ERC20MinterRewards.sol` — no changes
 - `IZora1155.sol` — no changes
 - `ERC20Minter.sol` — fix OZ ReentrancyGuard import path + fix all relative imports
