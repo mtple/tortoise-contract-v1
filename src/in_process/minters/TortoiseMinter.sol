@@ -96,7 +96,7 @@ contract TortoiseMinter is
     /// @notice Mints a token using an ERC20 currency, note the total value must have been approved prior to calling this function
     /// @param mintTo The address to mint the token to
     /// @param quantity The quantity of tokens to mint
-    /// @param tokenAddress The address of the collection to mint
+    /// @param tokenAddress The address of the token to mint
     /// @param tokenId The ID of the token to mint
     /// @param totalValue The total value of the mint
     /// @param currency The address of the currency to use for the mint
