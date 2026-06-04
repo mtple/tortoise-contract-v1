@@ -27,7 +27,9 @@ contract MockInProcess1155 {
         permissions[tokenId][account] = bits;
     }
 
-    function adminMint(address recipient, uint256 tokenId, uint256 quantity, bytes calldata) external {
+    function adminMint(address recipient, uint256 tokenId, uint256 quantity, bytes calldata)
+        external
+    {
         if (permissions[tokenId][msg.sender] & PERMISSION_BIT_MINTER == 0) {
             revert MissingMinterPermission();
         }

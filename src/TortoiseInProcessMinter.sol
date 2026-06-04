@@ -273,10 +273,13 @@ contract TortoiseInProcessMinter is
         if (block.timestamp > deadline) revert SignatureExpired();
         if (nonce != saleUpdateNonces[key]) revert NonceMismatch(saleUpdateNonces[key], nonce);
 
-        bytes32 saleHash =
-            keccak256(abi.encode(cfg.saleStart, cfg.saleEnd, cfg.maxTokensPerAddress, cfg.pricePerToken));
+        bytes32 saleHash = keccak256(
+            abi.encode(cfg.saleStart, cfg.saleEnd, cfg.maxTokensPerAddress, cfg.pricePerToken)
+        );
         bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(_SET_SALE_TYPEHASH, collection, tokenId, saleHash, nonce, deadline))
+            keccak256(
+                abi.encode(_SET_SALE_TYPEHASH, collection, tokenId, saleHash, nonce, deadline)
+            )
         );
         if (!SignatureChecker.isValidSignatureNowCalldata(artist, digest, artistSignature)) {
             revert InvalidSaleSignature();
@@ -297,7 +300,12 @@ contract TortoiseInProcessMinter is
             exists: true
         });
         emit SaleSet(
-            collection, tokenId, cfg.pricePerToken, cfg.saleStart, cfg.saleEnd, cfg.maxTokensPerAddress
+            collection,
+            tokenId,
+            cfg.pricePerToken,
+            cfg.saleStart,
+            cfg.saleEnd,
+            cfg.maxTokensPerAddress
         );
     }
 
@@ -381,9 +389,12 @@ contract TortoiseInProcessMinter is
         emit SongRegistered(collection, tokenId, artist);
     }
 
-    function _setSplits(address collection, uint256 tokenId, bytes32 key, SplitRecipient[] calldata splits)
-        internal
-    {
+    function _setSplits(
+        address collection,
+        uint256 tokenId,
+        bytes32 key,
+        SplitRecipient[] calldata splits
+    ) internal {
         SplitLib.validateSplits(splits);
         delete songSplits[key];
         for (uint256 i; i < splits.length;) {
@@ -631,7 +642,8 @@ contract TortoiseInProcessMinter is
     }
 
     function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {
-        return interfaceId == type(IMinter1155).interfaceId || interfaceId == type(IERC165).interfaceId;
+        return
+            interfaceId == type(IMinter1155).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
     // ============ Views ============

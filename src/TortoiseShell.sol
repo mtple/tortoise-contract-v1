@@ -188,7 +188,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         }
         bytes32 digest = _hashTypedDataV4(
             keccak256(
-                abi.encode(_CLAIM_SHELL_REWARDS_TO_TYPEHASH, user, payoutTo, amount, nonce, deadline)
+                abi.encode(
+                    _CLAIM_SHELL_REWARDS_TO_TYPEHASH, user, payoutTo, amount, nonce, deadline
+                )
             )
         );
         if (!SignatureChecker.isValidSignatureNowCalldata(user, digest, signature)) {
@@ -296,8 +298,8 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     }
 
     function earned(address account) public view returns (uint256) {
-        return (stakedBalance[account] * (rewardPerToken() - userRewardPerTokenPaid[account])) / 1e18
-            + userUnpaidRewards[account];
+        return (stakedBalance[account] * (rewardPerToken() - userRewardPerTokenPaid[account]))
+            / 1e18 + userUnpaidRewards[account];
     }
 
     /// @notice ETH rewards currently claimable by `user` (accrued + previously settled).

@@ -70,7 +70,7 @@ contract TortoiseInProcessMinterTest is Test {
         assertEq(nft.balanceOf(collector, TOKEN_ID), 1, "minted");
         assertEq(platform.balance, 0.05 ether, "platform 5%");
         assertEq(artist.balance, 0.85 ether, "artist 85%");
-        assertEq(shell.depositedTotal(), 0.10 ether, "shell 10%");
+        assertEq(shell.depositedTotal(), 0.1 ether, "shell 10%");
         assertEq(shell.creditedTo(collector), 1e18, "credited");
         assertEq(address(minter).balance, 0, "no residual");
     }
@@ -82,7 +82,7 @@ contract TortoiseInProcessMinterTest is Test {
         assertEq(nft.balanceOf(collector, TOKEN_ID), 3);
         assertEq(platform.balance, 0.15 ether);
         assertEq(artist.balance, 2.55 ether);
-        assertEq(shell.depositedTotal(), 0.30 ether);
+        assertEq(shell.depositedTotal(), 0.3 ether);
         // credit only once per wallet/song regardless of quantity
         assertEq(shell.creditedTo(collector), 1e18);
     }
@@ -106,7 +106,9 @@ contract TortoiseInProcessMinterTest is Test {
     function test_collect_revertsWrongValue() public {
         vm.prank(collector);
         vm.expectRevert(
-            abi.encodeWithSelector(TortoiseInProcessMinter.IncorrectEthValue.selector, PRICE, PRICE - 1)
+            abi.encodeWithSelector(
+                TortoiseInProcessMinter.IncorrectEthValue.selector, PRICE, PRICE - 1
+            )
         );
         minter.collect{value: PRICE - 1}(address(nft), TOKEN_ID, 1, PRICE, collector, "");
     }
@@ -120,7 +122,9 @@ contract TortoiseInProcessMinterTest is Test {
     function test_collect_revertsMaxCostExceeded() public {
         vm.prank(collector);
         vm.expectRevert(
-            abi.encodeWithSelector(TortoiseInProcessMinter.MaxCostExceeded.selector, PRICE, PRICE - 1)
+            abi.encodeWithSelector(
+                TortoiseInProcessMinter.MaxCostExceeded.selector, PRICE, PRICE - 1
+            )
         );
         minter.collect{value: PRICE}(address(nft), TOKEN_ID, 1, PRICE - 1, collector, "");
     }
@@ -187,7 +191,7 @@ contract TortoiseInProcessMinterTest is Test {
         vm.prank(collector);
         minter.collect{value: PRICE}(address(nft), TOKEN_ID, 1, PRICE, collector, "");
 
-        assertEq(shell.depositedTotal(), 0.10 ether, "no second deposit");
+        assertEq(shell.depositedTotal(), 0.1 ether, "no second deposit");
         // Second collect: artist gets 95% (85% + folded 10%).
         assertEq(artist.balance - artistAfterFirst, 0.95 ether, "staking folded to artist");
     }
@@ -260,10 +264,7 @@ contract TortoiseInProcessMinterTest is Test {
             address(nft),
             TOKEN_ID,
             TortoiseInProcessMinter.SaleUpdate({
-                saleStart: start,
-                saleEnd: end,
-                maxTokensPerAddress: 0,
-                pricePerToken: PRICE
+                saleStart: start, saleEnd: end, maxTokensPerAddress: 0, pricePerToken: PRICE
             })
         );
     }
