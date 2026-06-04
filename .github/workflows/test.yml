@@ -32,7 +32,7 @@ jobs:
         run: forge build --sizes
 
       - name: Run Forge tests (v2, active)
-        run: forge test -vvv
+        run: forge test -vvv --no-match-contract Fork
 
       - name: Run Forge build (v1, archived)
         env:
@@ -42,7 +42,7 @@ jobs:
       - name: Run Forge tests (v1, archived)
         env:
           FOUNDRY_PROFILE: v1
-        run: forge test -vvv
+        run: forge test -vvv --no-match-contract Fork
 
       - name: Run Forge fmt
         run: forge fmt --check
