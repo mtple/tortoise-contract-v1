@@ -28,9 +28,6 @@ jobs:
       - name: Show Forge version
         run: forge --version
 
-      - name: Run Forge fmt
-        run: forge fmt --check
-
       - name: Run Forge build (v2, active)
         run: forge build --sizes
 
@@ -42,3 +39,6 @@ jobs:
 
       - name: Run Forge tests (v1, archived)
         run: forge test --profile v1 -vvv
+
+      - name: Run Forge fmt
+        run: forge fmt --check
