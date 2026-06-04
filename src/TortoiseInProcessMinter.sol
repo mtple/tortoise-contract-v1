@@ -40,8 +40,9 @@ contract TortoiseInProcessMinter is
     uint256 public constant MAX_COMMENT_BYTES = 500;
     uint256 internal constant ETH_SEND_GAS_STIPEND = 30_000;
 
-    bytes32 private constant _SET_SALE_TYPEHASH =
-        keccak256("SetSale(address collection,uint256 tokenId,bytes32 saleHash,uint256 nonce,uint256 deadline)");
+    bytes32 private constant _SET_SALE_TYPEHASH = keccak256(
+        "SetSale(address collection,uint256 tokenId,bytes32 saleHash,uint256 nonce,uint256 deadline)"
+    );
     bytes32 private constant _REGISTER_SONG_WITH_SPLITS_TYPEHASH = keccak256(
         "RegisterSongWithSplits(address collection,uint256 tokenId,address artist,bytes32 splitsHash,bool lockSplits,uint256 nonce,uint256 deadline)"
     );
@@ -98,7 +99,9 @@ contract TortoiseInProcessMinter is
         uint64 saleEnd,
         uint64 maxTokensPerAddress
     );
-    event SongRegistered(address indexed collection, uint256 indexed tokenId, address indexed artist);
+    event SongRegistered(
+        address indexed collection, uint256 indexed tokenId, address indexed artist
+    );
     event SongCollected(
         address indexed collection,
         uint256 indexed tokenId,
@@ -123,7 +126,10 @@ contract TortoiseInProcessMinter is
         uint256 artistRevenue
     );
     event StakeCredited(
-        address indexed collection, uint256 indexed tokenId, address indexed collector, uint256 rewardUnits
+        address indexed collection,
+        uint256 indexed tokenId,
+        address indexed collector,
+        uint256 rewardUnits
     );
     event ShellCreditFailed(
         address indexed collection,
@@ -137,10 +143,16 @@ contract TortoiseInProcessMinter is
     event SplitsConfigured(address indexed collection, uint256 indexed tokenId);
     event SplitsLocked(address indexed collection, uint256 indexed tokenId);
     event SplitPaymentDeferred(
-        address indexed collection, uint256 indexed tokenId, address indexed recipient, uint256 amount
+        address indexed collection,
+        uint256 indexed tokenId,
+        address indexed recipient,
+        uint256 amount
     );
     event PaymentDistributed(
-        address indexed collection, uint256 indexed tokenId, address indexed recipient, uint256 amount
+        address indexed collection,
+        uint256 indexed tokenId,
+        address indexed recipient,
+        uint256 amount
     );
     event PlatformFeeBpsUpdated(uint16 oldBps, uint16 newBps);
     event StakingFeeBpsUpdated(uint16 oldBps, uint16 newBps);
@@ -252,7 +264,10 @@ contract TortoiseInProcessMinter is
 
     /// @notice Owner-set sale config (emergency / initial / operator-as-owner). Bumps the
     ///         per-song nonce, invalidating any in-flight artist signature.
-    function setSale(address collection, uint256 tokenId, SaleUpdate calldata cfg) external onlyOwner {
+    function setSale(address collection, uint256 tokenId, SaleUpdate calldata cfg)
+        external
+        onlyOwner
+    {
         bytes32 key = _songKey(collection, tokenId);
         _applySale(collection, tokenId, key, cfg);
         saleUpdateNonces[key] += 1;
