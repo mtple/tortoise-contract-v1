@@ -19,7 +19,7 @@ src/                  v2 (active): native-ETH In Process minter + ETH TortoiseSh
 test/                 v2 tests (unit / fuzz / invariant / fork)
 script/               v2 deploy + setup-action scripts
 planning/             design & implementation docs
-legacy/v1/            archived v1 (USDC) — build/test with `--profile v1`
+legacy/v1/            archived v1 (USDC) — build/test with `FOUNDRY_PROFILE=v1`
 ```
 
 The sections below document the archived **v1** contracts.
@@ -126,7 +126,7 @@ FOUNDRY_PROFILE=ci forge test
 ```bash
 cp .env.example .env
 # Fill in .env values
-forge script legacy/v1/script/Deploy.s.sol --profile v1 --rpc-url $BASE_RPC_URL --broadcast --verify
+FOUNDRY_PROFILE=v1 forge script legacy/v1/script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
 ```
 
 Deployment order:

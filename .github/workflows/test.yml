@@ -35,10 +35,14 @@ jobs:
         run: forge test -vvv
 
       - name: Run Forge build (v1, archived)
-        run: forge build --profile v1 --sizes
+        env:
+          FOUNDRY_PROFILE: v1
+        run: forge build --sizes
 
       - name: Run Forge tests (v1, archived)
-        run: forge test --profile v1 -vvv
+        env:
+          FOUNDRY_PROFILE: v1
+        run: forge test -vvv
 
       - name: Run Forge fmt
         run: forge fmt --check

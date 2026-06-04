@@ -20,8 +20,8 @@ v1 lives under its own Foundry profile so it stays runnable without polluting th
 v2 build:
 
 ```bash
-forge build --profile v1 --sizes
-forge test  --profile v1 -vvv
+FOUNDRY_PROFILE=v1 forge build --sizes
+FOUNDRY_PROFILE=v1 forge test  -vvv
 ```
 
-CI runs both the active (`src/`) and archived (`--profile v1`) suites on every push.
+CI runs both the active (`src/`) and archived (`FOUNDRY_PROFILE=v1`) suites on every push.
