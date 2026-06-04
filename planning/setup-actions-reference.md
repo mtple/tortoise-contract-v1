@@ -19,6 +19,8 @@ The information here is a precondition for Phase 3 (Direct Creation Scripts) in 
 
 The factory address differs from mainnet and must be treated as environment-specific. The verified source name may still be `ZoraCreator1155FactoryImpl` because In Process uses a Zora-derived creator stack; that does not make every Zora deployment an In Process deployment. Do not use a Base Sepolia factory operationally until it is confirmed by In Process docs/team or an equivalent source of truth.
 
+Note: a sweep of the Track-B branches (`origin/ziad-testing`, `origin/in_process`, 2026-06-04) found **no** operational InProcess Sepolia factory — those minter tests run against a `MockInProcess1155` stub, so the factory below is still unconfirmed and must come from the InProcess team. See the migration plan's "Base Sepolia" deployment section for the harvested Sepolia addresses that *are* known (the `TORS_TEST` faucet, etc.).
+
 | Contract | Address | Source / Verification |
 | --- | --- | --- |
 | In Process `Creator1155FactoryImpl` | TBD | Confirm from In Process testnet docs/team before deploying Tortoise test collections |

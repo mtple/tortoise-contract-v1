@@ -466,15 +466,43 @@ Remove reliance on:
 
 ### Base Sepolia
 
-1. Confirm and pin the Base Sepolia In Process `Creator1155FactoryImpl` in `planning/setup-actions-reference.md`. Do not use the candidate or canonical Zora factories unless In Process explicitly confirms that address, or Tortoise intentionally chooses a non-In-Process testnet stack.
-2. Deploy or reuse `TortoiseShell`.
-3. Deploy `TortoiseInProcessMinter`.
-4. Register the minter as an authorized caller on `TortoiseShell`.
-5. Create a test collection through the confirmed In Process factory.
-6. Create a test token with minter permission setup action.
-7. Configure sale and splits in the Tortoise minter.
-8. Collect with Base Sepolia ETH.
-9. Verify ERC-1155 ownership, ETH distribution, shell credit, and indexer records.
+#### Known Base Sepolia addresses (harvested from `origin/ziad-testing`)
+
+| Item | Address | Reuse for ETH stack? |
+| --- | --- | --- |
+| `TORS_TEST` faucet token (testnet TORT) | `0x1c3879b9dabA1B51253b109726C44bb391cae8c5` | **Yes** — reuse as the staking token for the ETH `TortoiseShell` on testnet (H.5). |
+| `TORTOISE_SHELL` (Track-B, USDC) | `0x5220C7656B1556E2FfAfcb8663033409a4cAAaeE` | No — redeploy as ETH-native shell (D.11). |
+| `TORTOISE_MINTER` (Track-B Zora ERC20 fork) | `0x2a805A41A599BbBf8610D8926cfc2c43c7940d9f` | No — superseded by `TortoiseInProcessMinter`. |
+| `TORTOISE_V1` (USDC v1) | `0x0713940762CC2abB896A5722ce4e725da46dbb56` | No — unrelated to the ETH minter. |
+
+Record new ETH-stack deployments under the same `addresses/84532.json` registry
+convention (H.5), adding keys like `TORTOISE_SHELL_ETH` and `TORTOISE_INPROCESS_MINTER`
+so the old USDC-era entries are not overwritten.
+
+> ⚠️ **InProcess Sepolia factory is still unknown.** It is **not** in Ziad's branches —
+> his `TortoiseMinter` tests run against a `MockInProcess1155` stub, and his Sepolia
+> deploys (`DeployBaseSepolia.s.sol`) only stand up Tortoise's own USDC contracts. No
+> live InProcess/Zora factory or collection address was ever pinned. The factory must be
+> obtained from the InProcess team (see "In Process Team Dependency" #1). The
+> `setup-actions-reference.md` §C.1 candidate (`0x6832A99…`) and canonical Zora factory
+> (`0x3b82f09…`) remain **reference-only** until confirmed.
+
+#### Procedure
+
+1. Confirm and pin the Base Sepolia In Process `Creator1155FactoryImpl` in `planning/setup-actions-reference.md`. Scripts **fail closed** until it is confirmed; do not use the candidate or canonical Zora factories unless In Process explicitly confirms that address, or Tortoise intentionally chooses a non-In-Process testnet stack.
+2. Deploy the ETH-native `TortoiseShell`, passing the reusable `TORS_TEST` token (`0x1c38…e8c5`) as the staking token. (No USDC/reward-token arg — `depositRewards` is payable.)
+3. Deploy `TortoiseInProcessMinter` (constructor-wires shell, platform/staking fee bps, owner — immutable, no proxy initializer).
+4. Register the minter as an authorized caller on `TortoiseShell` (`addAuthorizedCaller`).
+5. Fund the shell TORT pool from the `TORS_TEST` faucet and set `tortRewardPerCollection`.
+6. Create a test collection through the confirmed In Process factory.
+7. Create a test token with the `addPermission(tokenId, minter, 4)` setup action (§C.3).
+8. Configure sale and splits in the Tortoise minter (`setSale` + `registerSongWithSplits`).
+9. Collect with Base Sepolia ETH.
+10. Verify ERC-1155 ownership, ETH distribution (5/10/85), shell credit, pending-claim behavior, and indexer records.
+
+The env-driven `DeployBaseSepolia.s.sol` (H.5) reads the factory, `TORS_TEST`, fee bps,
+and owner from env/`addresses/84532.json` and must fail closed on any missing value —
+adapted from Ziad's script but with the USDC arguments removed.
 
 ### Base Mainnet
 
