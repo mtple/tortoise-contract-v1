@@ -58,7 +58,7 @@ contract TortoiseShellETHTest is Test {
         vm.warp(block.timestamp + DURATION);
 
         uint256 earned = shell.earned(alice);
-        assertApproxEqAbs(earned, 7 ether, 1e13,"alice earns full period");
+        assertApproxEqAbs(earned, 7 ether, 1e13, "alice earns full period");
     }
 
     function test_claimRewardsPaysEth() public {
@@ -69,7 +69,7 @@ contract TortoiseShellETHTest is Test {
         uint256 before = alice.balance;
         vm.prank(alice);
         shell.claimRewards();
-        assertApproxEqAbs(alice.balance - before, 7 ether, 1e13,"paid in ETH");
+        assertApproxEqAbs(alice.balance - before, 7 ether, 1e13, "paid in ETH");
     }
 
     function test_proportionalSplit() public {
