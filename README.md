@@ -1,10 +1,32 @@
-# Tortoise v1
+# Tortoise
 
-Two Solidity contracts for the Tortoise music platform on Base. Collectors pay USDC to mint music NFTs. Revenue splits three ways: artist, platform, and stakers. Collectors automatically receive staked TORT tokens, growing their share of future rewards.
+Solidity contracts for the Tortoise music platform on Base.
 
-## Contracts
+> **Status: migrating to a native-ETH stack.** The active codebase in `src/` is the v2
+> system — `TortoiseInProcessMinter` (mints In Process / Zora-compatible ERC-1155s via
+> `adminMint`, paying in **native ETH**) plus an ETH-native `TortoiseShell`, with a
+> 5/10/85 platform/staking/artist split. See
+> [`planning/eth-minter-implementation-plan.md`](planning/eth-minter-implementation-plan.md).
+>
+> The original USDC v1 (`TortoiseV1` + USDC `TortoiseShell`, tag `v1.0.0-rc1`, audits
+> 6→12) is **archived, frozen, and audited** under [`legacy/v1/`](legacy/README.md). It
+> is not migrated to v2 and shares no state.
 
-### TortoiseV1 (`src/TortoiseV1.sol`)
+## Repository layout
+
+```
+src/                  v2 (active): native-ETH In Process minter + ETH TortoiseShell
+test/                 v2 tests (unit / fuzz / invariant / fork)
+script/               v2 deploy + setup-action scripts
+planning/             design & implementation docs
+legacy/v1/            archived v1 (USDC) — build/test with `--profile v1`
+```
+
+The sections below document the archived **v1** contracts.
+
+## Contracts (v1, archived under `legacy/v1/`)
+
+### TortoiseV1 (`legacy/v1/src/TortoiseV1.sol`)
 
 ERC-1155 music NFT collection contract.
 
@@ -16,7 +38,7 @@ ERC-1155 music NFT collection contract.
 - TORT crediting via TortoiseShell on every mint (try/catch so shell issues never block mints)
 - Shell integration can be disabled by setting `tortoiseShell` to `address(0)` (auto-zeros staking fee)
 
-### TortoiseShell (`src/TortoiseShell.sol`)
+### TortoiseShell (`legacy/v1/src/TortoiseShell.sol`)
 
 Staking contract with USDC rewards and automatic TORT crediting.
 
@@ -28,7 +50,7 @@ Staking contract with USDC rewards and automatic TORT crediting.
 - Emergency withdraw: get TORT back, forfeit unclaimed USDC
 - Pause-safe: `withdraw`, `emergencyWithdraw`, `depositRewards`, and `creditStake` work when paused
 
-### SplitLib (`src/libraries/SplitLib.sol`)
+### SplitLib (`legacy/v1/src/libraries/SplitLib.sol`)
 
 Library for revenue split validation and calculation. Enforces basis points summing to 10,000, max 10 recipients, min 1% per recipient, no duplicates, no zero addresses.
 
@@ -99,12 +121,12 @@ FOUNDRY_PROFILE=ci forge test
 | TortoiseShellInvariantTest | 4 | Invariant: totalStaked consistency, TORT pool accounting, USDC solvency |
 | TortoiseV1ForkTest | 6 | Fork: real Base USDC/TORT, full lifecycle, splits, reward claims |
 
-## Deployment
+## Deployment (v1, archived)
 
 ```bash
 cp .env.example .env
 # Fill in .env values
-forge script script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
+forge script legacy/v1/script/Deploy.s.sol --profile v1 --rpc-url $BASE_RPC_URL --broadcast --verify
 ```
 
 Deployment order:
