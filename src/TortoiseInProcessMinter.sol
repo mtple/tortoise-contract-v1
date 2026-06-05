@@ -38,6 +38,7 @@ contract TortoiseInProcessMinter is
     uint16 public constant MAX_PLATFORM_FEE_BPS = 2_000; // 20%
     uint16 public constant MAX_STAKING_FEE_BPS = 2_000; // 20%
     uint256 public constant MAX_COMMENT_BYTES = 500;
+    uint256 public constant MAX_BATCH_ITEMS = 20;
     uint256 internal constant ETH_SEND_GAS_STIPEND = 30_000;
 
     bytes32 private constant _SET_SALE_TYPEHASH = keccak256(
@@ -65,6 +66,15 @@ contract TortoiseInProcessMinter is
         uint64 saleEnd;
         uint64 maxTokensPerAddress;
         uint256 pricePerToken;
+    }
+
+    struct CollectItem {
+        address collection;
+        uint256 tokenId;
+        uint256 quantity;
+        address mintTo;
+        uint256 maxTotalCost;
+        string comment;
     }
 
     // ============ State ============
@@ -173,6 +183,8 @@ contract TortoiseInProcessMinter is
     error MaxCostExceeded(uint256 cost, uint256 maxCost);
     error MaxTokensPerAddressExceeded();
     error CommentTooLong();
+    error EmptyBatch();
+    error BatchTooLarge(uint256 provided, uint256 max);
     error NotArtist();
     error SplitsAreLocked();
     error SplitToSelf();
@@ -227,11 +239,68 @@ contract TortoiseInProcessMinter is
         address mintTo,
         string calldata comment
     ) external payable nonReentrant whenNotPaused {
+        (bytes32 key, uint256 totalCost) =
+            _validateAndQuote(collection, tokenId, quantity, mintTo, comment);
+        if (msg.value != totalCost) revert IncorrectEthValue(totalCost, msg.value);
+        if (totalCost > maxTotalCost) revert MaxCostExceeded(totalCost, maxTotalCost);
+        _processCollect(collection, tokenId, key, quantity, mintTo, comment, totalCost);
+    }
+
+    /// @notice Collect several items in one transaction. `msg.value` must equal the
+    ///         aggregate ETH cost. All-or-nothing: any item revert tears down the whole tx.
+    /// @param maxAggregateCost Front-run guard on the total.
+    function batchCollect(CollectItem[] calldata items, uint256 maxAggregateCost)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+    {
+        uint256 n = items.length;
+        if (n == 0) revert EmptyBatch();
+        if (n > MAX_BATCH_ITEMS) revert BatchTooLarge(n, MAX_BATCH_ITEMS);
+
+        bytes32[] memory keys = new bytes32[](n);
+        uint256[] memory costs = new uint256[](n);
+        uint256 aggregate;
+        for (uint256 i; i < n;) {
+            CollectItem calldata it = items[i];
+            (bytes32 key, uint256 cost) =
+                _validateAndQuote(it.collection, it.tokenId, it.quantity, it.mintTo, it.comment);
+            if (cost > it.maxTotalCost) revert MaxCostExceeded(cost, it.maxTotalCost);
+            keys[i] = key;
+            costs[i] = cost;
+            aggregate += cost;
+            unchecked {
+                ++i;
+            }
+        }
+        if (msg.value != aggregate) revert IncorrectEthValue(aggregate, msg.value);
+        if (aggregate > maxAggregateCost) revert MaxCostExceeded(aggregate, maxAggregateCost);
+
+        for (uint256 i; i < n;) {
+            CollectItem calldata it = items[i];
+            _processCollect(
+                it.collection, it.tokenId, keys[i], it.quantity, it.mintTo, it.comment, costs[i]
+            );
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @dev Shared read-only validation + price quote for `collect` / `batchCollect`.
+    function _validateAndQuote(
+        address collection,
+        uint256 tokenId,
+        uint256 quantity,
+        address mintTo,
+        string calldata comment
+    ) internal view returns (bytes32 key, uint256 totalCost) {
         if (mintTo == address(0)) revert ZeroAddress();
         if (quantity == 0) revert ZeroQuantity();
         if (bytes(comment).length > MAX_COMMENT_BYTES) revert CommentTooLong();
 
-        bytes32 key = _songKey(collection, tokenId);
+        key = _songKey(collection, tokenId);
         if (songArtist[key] == address(0)) revert SongNotRegistered();
 
         SaleConfig memory s = sales[key];
@@ -239,14 +308,25 @@ contract TortoiseInProcessMinter is
         if (block.timestamp < s.saleStart) revert SaleNotStarted();
         if (block.timestamp > s.saleEnd) revert SaleEnded();
 
-        uint256 totalCost = s.pricePerToken * quantity;
-        if (msg.value != totalCost) revert IncorrectEthValue(totalCost, msg.value);
-        if (totalCost > maxTotalCost) revert MaxCostExceeded(totalCost, maxTotalCost);
+        totalCost = s.pricePerToken * quantity;
+    }
 
+    /// @dev Per-wallet cap → adminMint → distribute → events. Caller has already validated
+    ///      and ensured the contract holds the ETH for this item's `totalCost`.
+    function _processCollect(
+        address collection,
+        uint256 tokenId,
+        bytes32 key,
+        uint256 quantity,
+        address mintTo,
+        string calldata comment,
+        uint256 totalCost
+    ) internal {
         // Per-wallet cap: increment-then-check on the recipient (write before adminMint).
-        if (s.maxTokensPerAddress != 0) {
+        uint64 cap = sales[key].maxTokensPerAddress;
+        if (cap != 0) {
             uint256 newTotal = uint256(mintedByAddress[key][mintTo]) + quantity;
-            if (newTotal > s.maxTokensPerAddress) revert MaxTokensPerAddressExceeded();
+            if (newTotal > cap) revert MaxTokensPerAddressExceeded();
             mintedByAddress[key][mintTo] = uint64(newTotal);
         }
 
