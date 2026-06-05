@@ -23,9 +23,8 @@ contract Togglable {
         address payoutTo,
         uint256 amount
     ) external {
-        TortoiseInProcessMinter(minter).claimPendingTo(
-            collection, tokenId, address(this), payoutTo, amount, 0, 0, ""
-        );
+        TortoiseInProcessMinter(minter)
+            .claimPendingTo(collection, tokenId, address(this), payoutTo, amount, 0, 0, "");
     }
 
     receive() external payable {

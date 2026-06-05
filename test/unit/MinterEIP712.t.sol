@@ -69,10 +69,7 @@ contract MinterEIP712Test is Test {
         returns (TortoiseInProcessMinter.SaleUpdate memory)
     {
         return TortoiseInProcessMinter.SaleUpdate({
-            saleStart: 0,
-            saleEnd: type(uint64).max,
-            maxTokensPerAddress: 0,
-            pricePerToken: price
+            saleStart: 0, saleEnd: type(uint64).max, maxTokensPerAddress: 0, pricePerToken: price
         });
     }
 
