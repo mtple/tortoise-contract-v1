@@ -1,0 +1,43 @@
+{
+  "_comment": "EIP-712 signature vectors generated OFF-CHAIN with `cast wallet sign --data` (Foundry cast, an independent EIP-712 implementation). Asserted on-chain in test/unit/MinterEIP712Vectors.t.sol to cross-check the contract's domain separator + typehashes against an external signer (the role the backend plays). Domain is fully pinned: the minter is deployed via CREATE from deployer 0xD004 at nonce 0 (address depends only on deployer+nonce, not bytecode) on chainId 31337. Regenerate: see the cast commands documented in the test header.",
+  "domain": {
+    "name": "TortoiseInProcessMinter",
+    "version": "1",
+    "chainId": 31337,
+    "verifyingContract": "0x5330831D6A3ae8950acd57eA509eDBD1428fBcc6"
+  },
+  "signerPrivateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "artist": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "deadline": 4102444800,
+  "setSale": {
+    "collection": "0x000000000000000000000000000000000000cafe",
+    "tokenId": 7,
+    "saleStart": 0,
+    "saleEnd": "18446744073709551615",
+    "maxTokensPerAddress": 0,
+    "pricePerToken": "1000000000000000000",
+    "saleHash": "0xee7fffdb83c3a7a44eed3ccbed67cb20c5f4286181752a933d7849beec85af35",
+    "nonce": 0,
+    "signature": "0xa0a2419340240b6c06ec43a2b82fc0a55b2174343899508fd9f3c6fdcea9645e692aa04cc493d02cc796f7c9b87611a1ac0f297371c010f0c5e1cc0fe3145db11b"
+  },
+  "registerSongWithSplits": {
+    "collection": "0x000000000000000000000000000000000000cafe",
+    "tokenId": 8,
+    "artist": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "splitRecipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "splitPercentage": 10000,
+    "splitsHash": "0x1cfe5c757a45b502d277df50f0e4486accde96d64825a6a0af0a97a4898dab42",
+    "lockSplits": true,
+    "nonce": 0,
+    "signature": "0x2fb1a0693d4207825d2f3eb0f5115144edd7523b6a644a316e40f785e41f1f4d399b6f6d40d539aeb4d3fcedb920152456c5c0821b76bc53ff422541e0b8b8a21b"
+  },
+  "claimPendingTo": {
+    "collection": "0x000000000000000000000000000000000000cafe",
+    "tokenId": 9,
+    "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "payoutTo": "0x000000000000000000000000000000000000d00d",
+    "amount": "500000000000000000",
+    "nonce": 0,
+    "signature": "0x42a7c1f73756d0c0cddd9d7ffbf5430d9f5859042e2ca4b56a3338bcc7191cb66ba4ea159b63ca093bb36de932cc14bb42abf88b662a1b6653b590f1230624061c"
+  }
+}

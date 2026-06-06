@@ -8,6 +8,7 @@ optimizer_runs = 200
 via_ir = false
 evm_version = "cancun"
 gas_reports = ["TortoiseInProcessMinter", "TortoiseShell"]
+fs_permissions = [{access = "read", path = "./test/fixtures"}]
 
 [fuzz]
 runs = 1000
