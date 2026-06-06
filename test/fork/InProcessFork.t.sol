@@ -68,9 +68,14 @@ contract InProcessForkTest is Test {
         royalty.royaltyBPS = 500;
         royalty.royaltyRecipient = artist;
 
-        address collection = ICreator1155Factory(FACTORY).createContract(
-            "ar://contract-metadata", "Fork Test Album", royalty, payable(address(this)), actions
-        );
+        address collection = ICreator1155Factory(FACTORY)
+            .createContract(
+                "ar://contract-metadata",
+                "Fork Test Album",
+                royalty,
+                payable(address(this)),
+                actions
+            );
         assertGt(collection.code.length, 0, "collection deployed");
 
         // Configure the Tortoise sale and collect with real ETH.
