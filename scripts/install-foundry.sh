@@ -6,10 +6,11 @@
 # allowlist (api.github.com and binaries.soliditylang.org aren't allowlisted), but GitHub
 # release assets (release-assets.githubusercontent.com) ARE, so we fetch directly.
 #
-# Configure it once in the environment's "Setup script" field:
-#     bash scripts/install-foundry.sh
-# Setup-script output is cached in the filesystem snapshot, so later sessions start with the
-# toolchain already on disk — no per-session download, unlike a SessionStart hook.
+# Use this file FROM INSIDE a session (the repo is cloned by then):  bash scripts/install-foundry.sh
+#
+# NOTE: the environment's "Setup script" field runs BEFORE the repo is cloned, so it cannot
+# reference this file. For that field, paste the self-contained snippet from scripts/README.md
+# (same install, no repo dependency) — its output is cached so later sessions skip re-downloading.
 set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
