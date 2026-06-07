@@ -32,7 +32,5 @@ md/
 # OS
 .DS_Store
 
-# Claude Code — ignore local config, but commit the shared web setup hook
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
+# Claude Code
+.claude/
