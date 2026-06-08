@@ -327,6 +327,9 @@ contract TortoiseInProcessMinter is
         if (cap != 0) {
             uint256 newTotal = uint256(mintedByAddress[key][mintTo]) + quantity;
             if (newTotal > cap) revert MaxTokensPerAddressExceeded();
+            // Safe cast: the check above guarantees newTotal <= cap, and `cap` is a uint64,
+            // so newTotal always fits in uint64.
+            // forge-lint: disable-next-line(unsafe-typecast)
             mintedByAddress[key][mintTo] = uint64(newTotal);
         }
 

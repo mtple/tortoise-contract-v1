@@ -145,7 +145,7 @@ contract MinterReentrancyTest is Test {
         );
     }
 
-    function _assertGuardRevert(bytes memory caught, string memory label) internal {
+    function _assertGuardRevert(bytes memory caught, string memory label) internal pure {
         assertEq(caught, abi.encodeWithSelector(REENTRANCY_GUARD_SELECTOR), label);
     }
 
