@@ -411,7 +411,7 @@ For delegated shell reward claims, `_claimRewards(user, payoutTo, amount)` must 
 
 ## Backend Indexing Plan
 
-Tortoise should run a small indexer or event listener for:
+Tortoise runs a small indexer or event listener **within the existing app** (an in-app worker, or a hosted indexer) for:
 
 - `SaleSet`
 - `SongCollected`
@@ -429,6 +429,8 @@ Tortoise should run a small indexer or event listener for:
 
 The database should treat backend-created records as the primary catalog and contract events as the settlement truth.
 
+Not everything needs the indexer. Current point-in-time state is available from public minter getters (`sale`, `pendingClaims`/`totalPendingClaims`, `mintedByAddress`, `songArtist`, `getSongSplits`) and ERC-1155 `balanceOf`, and can be read live with no indexer. The indexer is required only for event-derived views — **comments** (`MintComment` is event-only, never stored on-chain), collector lists, and historical earnings/sales. The indexer can therefore be deferred until those views are needed; a first cut can ship on the existing DB + live getters.
+
 Add-track safety depends on `lastKnownTokenId` being current. Indexer health monitoring is therefore a precondition for the artist add-track path, and the backend should fail closed when collection token indexing is behind. When possible, run `assumeLastTokenIdMatches(lastKnownTokenId)` as a read-only preflight before submitting the write transaction so stale state fails before gas is spent.
 
 Minimum indexed product views:
@@ -443,7 +445,7 @@ Minimum indexed product views:
 
 ## Backend Data Model Adjustments
 
-Keep the album-oriented data model from the router plan, but change the integration fields:
+These are field changes to the **existing Tortoise app database** — no new datastore. Keep the album-oriented data model from the router plan, but change the integration fields:
 
 - Store `minterAddress`.
 - Store `saleConfigSource = tortoise_minter`.
@@ -780,20 +782,42 @@ From `origin/ziad-testing`:
   `TORSTest` faucet token, and the `addresses/<chainId>.json` registry + chain routing
   in `Config.s.sol`.
 
-### Phase 4: Backend And Indexer
+### Phase 4: Backend And Indexer (in the existing Tortoise app)
 
-- Add backend paths for direct factory calls.
-- Add event indexer.
-- Add reconciliation jobs.
-- Update DB schema.
-- Replace router-based collect calls with minter collect calls.
+This extends the **existing Tortoise app's backend and database** — it is not new
+infrastructure and introduces no new datastore. The only genuinely new component is an
+event-listener/indexer worker, which can run in-app (a poll/subscribe loop with
+`viem`/`ethers`, or a hosted indexer such as Ponder/Goldsky/Alchemy webhooks); no separate
+indexing platform is required. Secrets (Base RPC URL, operator signer key, DB connection)
+stay in the app's existing config/secret management and are never committed.
 
-### Phase 5: Frontend
+- Migrate the existing DB schema in place (see "Backend Data Model Adjustments"): field
+  changes only, no new datastore.
+- Replace the router/USDC + In Process hosted-API paths with **direct factory calls**
+  (collection/token creation via `setupActions`; reuse the fork-verified `script/SetupActions`
+  bundle recipe) and **direct minter calls** (`setSale`, `registerSong[WithSplits]`, and the
+  app's `collect`/`batchCollect` submission path).
+- Add the **event indexer worker** for the minter events + ERC-1155 transfers.
+- Add reconciliation jobs (backend catalog = primary record; chain events = settlement truth).
+- **Live reads vs. indexing.** Current point-in-time state is available from public getters and
+  can be read live with no indexer: sale config (`sale`), pending claims (`pendingClaims`,
+  `totalPendingClaims`), per-wallet minted counts (`mintedByAddress`), ownership (ERC-1155
+  `balanceOf`), and artist/splits (`songArtist`, `getSongSplits`). The indexer is required only
+  for event-derived views — **comments** (`MintComment` is event-only, never stored on-chain),
+  collector lists, and historical earnings — so the indexer can be deferred until those views
+  are needed. A first cut can ship on existing DB + live getters alone.
 
-- Update upload flow to use Tortoise direct contract creation status.
-- Update collect UI to call `TortoiseInProcessMinter` with native ETH value.
-- Add album collect quote from backend/minter sale configs.
-- Add owner/collector/comment views from Tortoise indexer.
+### Phase 5: Frontend (integrated into the existing Tortoise app)
+
+No separate frontend is built; these changes land in the **existing Tortoise app UI**.
+
+- Update the upload flow to use Tortoise direct contract-creation status.
+- Update the collect UI to call `TortoiseInProcessMinter.collect` with native ETH value,
+  re-quoting against the **live on-chain sale** and passing `maxTotalCost` as the front-run guard.
+- Add album batch-collect quote from backend/minter sale configs (`batchCollect`, `msg.value`
+  equal to the aggregate).
+- Add owner/collector/comment views and the artist earnings + pending-claim
+  (`claimPending`/`claimPendingTo`) UI from the data layer (live getters + indexer).
 
 ## EIP-712 Schemas
 
