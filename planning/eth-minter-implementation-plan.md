@@ -445,7 +445,7 @@ Minimum indexed product views:
 
 ## Backend Data Model Adjustments
 
-These are field changes to the **existing Tortoise app database** — no new datastore. Keep the album-oriented data model from the router plan, but change the integration fields:
+These are field changes to the **existing Tortoise app database** — no new datastore. Keep the album-oriented data model from the router plan, but change the integration fields (concrete mapping to the Supabase `music_metadata` / `collections` / `app_users` tables is in Phase 4 → "Mapping onto the existing app"):
 
 - Store `minterAddress`.
 - Store `saleConfigSource = tortoise_minter`.
@@ -806,6 +806,44 @@ stay in the app's existing config/secret management and are never committed.
   for event-derived views — **comments** (`MintComment` is event-only, never stored on-chain),
   collector lists, and historical earnings — so the indexer can be deferred until those views
   are needed. A first cut can ship on existing DB + live getters alone.
+
+#### Mapping onto the existing app (confirmed architecture)
+
+The Tortoise app is a Next.js + Supabase codebase with **no ORM** (raw
+`@supabase/supabase-js` client). This is the implementation blueprint, executed in the app
+repo (not this contracts repo):
+
+- **Stack / writes.** Supabase Postgres via the raw client. Writes go through the
+  service-role client *after* JWT verification (Farcaster Quick Auth / SIWE) using the
+  verified `user.id`/`fid`. Schema changes are Supabase SQL migrations (next in the existing
+  series), not ORM models.
+- **Coexist, don't replace.** The In Process minter is a NEW song version alongside the
+  existing v0.2 / v0.3 ERC-1155 music contracts. Route to it the way the app already detects
+  version from the `contract_song_id` suffix (e.g. `"7_0.3"`); the v0.2/v0.3 `mintSong` +
+  platform-fee path is untouched.
+- **Reuse the verify-then-record pattern.** `POST /api/users/collect-song` already implements
+  Phase 4's "chain = settlement truth": fetch receipt → decode ERC-1155 `TransferSingle` →
+  verify (success, mint from zero address, correct contract + songId) → dedupe by
+  `transaction_hash` → insert into `collections` → update `app_users.songs_collected`. For
+  minter-backed songs, extend this route to verify against `TortoiseInProcessMinter` + its In
+  Process collection (decode `SongCollected` / the `adminMint` `TransferSingle`), persist the
+  optional `comment`, and tag `currency = native_eth`.
+- **Data model (existing tables).**
+  - `music_metadata`: add `minter_address`, `collection_address`, `token_id`,
+    `currency = native_eth`, `sale_config_source = tortoise_minter`, plus the factory /
+    setup-action / sale-config tx hashes and token-permission status. Keep `contract_song_id`
+    as the version-tagged id.
+  - `collections`: already keyed by unique `transaction_hash` and denormalized — the home for
+    collect/earnings rows; add the minter/currency tags.
+  - `app_users.songs_collected` / `songs_created`: shape unchanged.
+- **Indexer is secondary.** Collects are app-mediated and verified synchronously in the route
+  above (comment captured there), so the per-collect path needs no background worker. A
+  worker/indexer is only for **out-of-band** events — direct on-chain collects not initiated
+  through the app, `MintComment` on those, and the pending-claim / split / shell history
+  (`SplitPaymentDeferred`, `PaymentDistributed`, `StakeCredited`, `RevenueDistributed`) behind
+  the earnings view. Defer until required.
+- **Reads via wagmi/viem.** Live getters (`sale`, `pendingClaims`, `mintedByAddress`,
+  `balanceOf`, splits) fit the app's existing cached `useReadContract` / `readContract` pattern.
 
 ### Phase 5: Frontend (integrated into the existing Tortoise app)
 
