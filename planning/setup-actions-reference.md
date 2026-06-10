@@ -144,7 +144,7 @@ actions[2] = abi.encodeWithSignature(
 );
 ```
 
-Fork tests must verify this three-action sequence (`setupNewToken`, optional `updateRoyaltiesForToken`, `addPermission`) on both Base mainnet fork and Base Sepolia before scripts are used operationally. The operator must hold collection admin permission before using `updateRoyaltiesForToken`; current expectation is that `PERMISSION_BIT_ADMIN` (`2`) is sufficient, but fork tests must prove this so an under-permissioned operator cannot fail mid-bundle in production.
+Fork tests must verify this three-action sequence (`setupNewToken`, optional `updateRoyaltiesForToken`, `addPermission`) on both Base mainnet fork and Base Sepolia before scripts are used operationally. **Confirmed on Base mainnet fork** (`test/fork/SetupActionsFork.t.sol`): the operator's `defaultAdmin` (`PERMISSION_BIT_ADMIN` = `2`) is sufficient for `updateRoyaltiesForToken` — the royalty-override bundle succeeded with the operator holding only collection admin, so an under-permissioned operator concern does not apply at the admin level. The override reads back from the creator's `royalties(uint256)` getter (returns the `(uint32,uint32,address)` `RoyaltyConfiguration`) and via EIP-2981 `royaltyInfo(uint256,uint256)`. Base Sepolia remains to be verified once its In Process factory is confirmed.
 
 ### What is **not** set in setup actions
 
