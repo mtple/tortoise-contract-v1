@@ -175,11 +175,14 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         usdc = IERC20(_usdc);
         shell = ITortoiseShell(_shell); // may be address(0) — shell integration is optional
         platformFeeBps = DEFAULT_PLATFORM_FEE_BPS;
-        stakingFeeBps = DEFAULT_STAKING_FEE_BPS;
+        // Preserve the invariant `stakingFeeBps > 0 => shell != address(0)` at construction:
+        // the shell is optional, so only default a nonzero staking fee when one is configured.
+        stakingFeeBps = _shell == address(0) ? 0 : DEFAULT_STAKING_FEE_BPS;
         defaultSongPrice = DEFAULT_SONG_PRICE;
-        _setDefaultRoyalty(msg.sender, DEFAULT_ROYALTY_BPS); // placeholder; per-song set in createSong
+        // No default royalty: royaltyInfo for never-created ids returns (address(0), 0); each
+        // real song sets its own royalty in createSong via _setTokenRoyalty.
         emit PlatformFeeBpsUpdated(0, DEFAULT_PLATFORM_FEE_BPS);
-        emit StakingFeeBpsUpdated(0, DEFAULT_STAKING_FEE_BPS);
+        emit StakingFeeBpsUpdated(0, stakingFeeBps);
         emit DefaultPriceUpdated(0, DEFAULT_SONG_PRICE);
         if (_shell != address(0)) emit TortoiseShellUpdated(address(0), _shell);
     }
@@ -226,11 +229,20 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint256 quantity,
         address mintTo,
         uint256 totalCost,
+        bytes32 commentHash,
         bytes32 salt
     ) public view returns (bytes32) {
         return keccak256(
             abi.encode(
-                _COLLECT_NONCE_PREFIX, block.chainid, address(this), songId, quantity, mintTo, totalCost, salt
+                _COLLECT_NONCE_PREFIX,
+                block.chainid,
+                address(this),
+                songId,
+                quantity,
+                mintTo,
+                totalCost,
+                commentHash,
+                salt
             )
         );
     }
@@ -247,12 +259,17 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     // ============ Song creation (creation + manifest + splits, atomic) ============
 
     /// @notice Create a song: record it, commit to its manifest, set optional splits/royalty.
-    ///         `msg.sender` is the artist. The manifest hash is derived on-chain from the
-    ///         emitted preimage, so the stored commitment and the event preimage are provably
-    ///         the same object. Immutability is structural: each call mints a fresh `songId`.
+    ///         Owner/operator-gated — the Tortoise operator submits on a verified artist's
+    ///         behalf. Gating it is also what prevents permissionless manifest front-running
+    ///         (a squatter registering a copied manifest under a lower songId). The manifest
+    ///         hash is derived on-chain from the emitted preimage, so the stored commitment and
+    ///         the event preimage are provably the same object. Immutability is structural:
+    ///         each call mints a fresh `songId`.
+    /// @param artist The credited artist (recorded as `songs[songId].artist`; controls splits).
     /// @param manifest Canonical JSON (sorted keys, fixed whitespace) — its `sha256` is committed.
     /// @param royaltyBps EIP-2981 royalty to the artist; 0 uses DEFAULT_ROYALTY_BPS.
     function createSong(
+        address artist,
         uint128 price,
         uint128 maxSupply,
         string calldata tokenUri,
@@ -260,7 +277,8 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         SplitRecipient[] calldata splits,
         bool lockSplitsNow,
         uint96 royaltyBps
-    ) external whenNotPaused returns (uint256 songId) {
+    ) external onlyOwner whenNotPaused returns (uint256 songId) {
+        if (artist == address(0)) revert ZeroAddress();
         if (bytes(tokenUri).length == 0) revert TitleOrUriEmpty();
         if (bytes(manifest).length == 0) revert EmptyManifest();
         if (bytes(manifest).length > MAX_MANIFEST_BYTES) revert ManifestTooLong();
@@ -270,7 +288,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
 
         songId = nextSongId++;
         songs[songId] = Song({
-            artist: msg.sender,
+            artist: artist,
             exists: true,
             splitsLocked: false,
             price: actualPrice,
@@ -278,23 +296,24 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
             currentSupply: 0
         });
         tokenUris[songId] = tokenUri;
-        artistSongs[msg.sender].push(songId);
+        artistSongs[artist].push(songId);
 
         bytes32 manifestHash = sha256(bytes(manifest)); // precompile 0x02, derive on-chain
         releaseManifest[songId] = manifestHash;
 
         uint96 rbps = royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : royaltyBps;
-        _setTokenRoyalty(songId, msg.sender, rbps);
+        _setTokenRoyalty(songId, artist, rbps);
 
         if (splits.length > 0) {
             _setSplits(songId, splits);
-            if (lockSplitsNow) {
-                songs[songId].splitsLocked = true;
-                emit SplitsLocked(songId);
-            }
+        }
+        // Lock applies even with no splits — lets an artist freeze a "100% to me" config immutably.
+        if (lockSplitsNow) {
+            songs[songId].splitsLocked = true;
+            emit SplitsLocked(songId);
         }
 
-        emit SongCreated(songId, msg.sender, manifestHash, actualPrice, maxSupply, tokenUri, manifest);
+        emit SongCreated(songId, artist, manifestHash, actualPrice, maxSupply, tokenUri, manifest);
         emit URI(tokenUri, songId);
     }
 
@@ -363,7 +382,9 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint256 expected = _validateAndQuote(songId, quantity, comment);
         if (totalCost != expected) revert IncorrectAuthorizedValue(expected, totalCost);
 
-        bytes32 nonce = collectNonce(songId, quantity, mintTo, totalCost, salt);
+        // Bind the comment into the nonce too, so a relayer on the sign-to-collect path cannot
+        // substitute or strip the comment that gets attributed on-chain to `from`.
+        bytes32 nonce = collectNonce(songId, quantity, mintTo, totalCost, keccak256(bytes(comment)), salt);
         // Pulls exactly `totalCost` USDC from `from` into this contract; USDC verifies `from`
         // signed over (from, this, totalCost, validAfter, validBefore, nonce). msg.sender==to
         // is satisfied because this contract is the payee.
@@ -438,10 +459,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint256 amount = pendingClaims[songId][recipient];
         if (amount == 0) revert NothingToClaim();
         pendingClaims[songId][recipient] = 0;
-        (bool ok, bytes memory ret) =
-            address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
-        bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
-        if (transferred) {
+        if (_usdcTransferSucceeded(recipient, amount)) {
             pendingClaimDeferredAt[songId][recipient] = 0;
             emit PaymentDistributed(songId, recipient, amount, false);
         } else {
@@ -592,19 +610,24 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     /// @dev USDC transfer; on failure (revert or `false`) defer to pendingClaims so one bad
     ///      address cannot brick the whole collect.
     function _transferOrDefer(uint256 songId, address recipient, uint256 amount) internal {
-        // A call to a zero-code address returns ok=true, ret.length==0 — indistinguishable from
-        // a no-return-value success — so guard code length first.
-        if (address(usdc).code.length == 0) revert ZeroAddress();
-        (bool ok, bytes memory ret) =
-            address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
-        bool transferred = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
-        if (transferred) {
+        if (_usdcTransferSucceeded(recipient, amount)) {
             emit PaymentDistributed(songId, recipient, amount, false);
         } else {
             pendingClaims[songId][recipient] += amount;
             pendingClaimDeferredAt[songId][recipient] = block.timestamp;
             emit SplitPaymentDeferred(songId, recipient, amount);
         }
+    }
+
+    /// @dev Low-level USDC transfer shared by `_transferOrDefer` and `claimPending` so the
+    ///      zero-code guard cannot drift between them. A call to a zero-code address returns
+    ///      ok=true, ret.length==0 — indistinguishable from a no-return-value token success —
+    ///      so guard code length first (hard revert), then decode a bool return safely.
+    function _usdcTransferSucceeded(address recipient, uint256 amount) internal returns (bool) {
+        if (address(usdc).code.length == 0) revert ZeroAddress();
+        (bool ok, bytes memory ret) =
+            address(usdc).call(abi.encodeCall(IERC20.transfer, (recipient, amount)));
+        return ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
     }
 
     /// @dev Credit TORT to the collector's shell. try/catch so shell issues never block collects.
