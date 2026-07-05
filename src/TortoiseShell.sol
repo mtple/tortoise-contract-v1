@@ -109,11 +109,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     /// transfer hooks. Accounting (`tortPool`, `stakedBalance`, `reservedBalance`,
     /// `totalRewardsDeposited`) assumes `amount` transferred equals `amount` received.
     /// Behavior is undefined under non-standard tokens.
-    constructor(
-        address _stakingToken,
-        address _rewardToken,
-        uint256 _rewardDuration
-    ) Ownable(msg.sender) {
+    constructor(address _stakingToken, address _rewardToken, uint256 _rewardDuration)
+        Ownable(msg.sender)
+    {
         if (_stakingToken == address(0)) revert ZeroAddress();
         if (_rewardToken == address(0)) revert ZeroAddress();
         if (_stakingToken == _rewardToken) revert TokensMustDiffer();
@@ -201,17 +199,20 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
         // `actual` may exceed `amount` when forfeited rewards are being recycled.
         uint256 currentBalance = rewardToken.balanceOf(address(this));
-        uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
+        uint256 actual =
+            currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
         if (actual == 0) return;
         totalRewardsDeposited += actual;
         _addReward(actual);
         emit RewardsDeposited(amount, actual, rewardRate);
     }
 
-    function creditStake(
-        address user,
-        uint256 quantity
-    ) external onlyAuthorizedCaller updateReward(user) returns (uint256 credited) {
+    function creditStake(address user, uint256 quantity)
+        external
+        onlyAuthorizedCaller
+        updateReward(user)
+        returns (uint256 credited)
+    {
         if (user == address(0)) revert ZeroAddress();
         uint256 creditAmount = quantity * tortRewardPerCollection;
 
@@ -257,9 +258,11 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         return stakedBalance[user];
     }
 
-    function getUserStats(
-        address user
-    ) external view returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool) {
+    function getUserStats(address user)
+        external
+        view
+        returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool)
+    {
         stakedAmount = stakedBalance[user];
         pendingUsdcRewards = earned(user) / REWARD_SCALAR;
         shareOfPool = totalStaked == 0 ? 0 : (stakedAmount * 1e18) / totalStaked;

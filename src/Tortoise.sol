@@ -406,9 +406,16 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         // Pulls exactly `totalCost` USDC from `from` into this contract; USDC verifies `from`
         // signed over (from, this, totalCost, validAfter, validBefore, nonce). msg.sender==to
         // holds because this contract is the payee.
-        IEIP3009(address(usdc)).receiveWithAuthorization(
-            from, address(this), totalCost, auth.validAfter, auth.validBefore, nonce, auth.signature
-        );
+        IEIP3009(address(usdc))
+            .receiveWithAuthorization(
+                from,
+                address(this),
+                totalCost,
+                auth.validAfter,
+                auth.validBefore,
+                nonce,
+                auth.signature
+            );
         _processCollect(songId, quantity, mintTo, from, totalCost, comment);
     }
 
@@ -534,7 +541,9 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         if (!s.exists) revert SongDoesNotExist();
         if (quantity == 0) revert ZeroQuantity();
         if (quantity > MAX_MINT_QUANTITY) revert ExceedsMaxMintQuantity();
-        if (s.maxSupply != 0 && s.currentSupply + quantity > s.maxSupply) revert ExceedsMaxSupply();
+        if (s.maxSupply != 0 && s.currentSupply + quantity > s.maxSupply) {
+            revert ExceedsMaxSupply();
+        }
         totalCost = uint256(s.price) * quantity;
     }
 
@@ -612,7 +621,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
             for (uint256 i; i < len;) {
                 SplitRecipient storage r = splits[i];
                 uint256 amount = (i == len - 1)
-                    ? artistRevenue - distributed // remainder to last recipient
+                    ? artistRevenue - distributed  // remainder to last recipient
                     : SplitLib.calculateSplitAmount(artistRevenue, r.percentage);
                 if (amount > 0) {
                     _transferOrDefer(songId, r.recipient, amount);
