@@ -58,6 +58,28 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint128 currentSupply;
     }
 
+    /// @dev createSong args bundled into one calldata struct so the function stays within the
+    ///      stack limit under the non-viaIR `ci` profile.
+    struct CreateSongParams {
+        address artist;
+        uint128 price; // 0 uses defaultSongPrice
+        uint128 maxSupply; // 0 == unlimited
+        uint96 royaltyBps; // EIP-2981; 0 uses DEFAULT_ROYALTY_BPS
+        bool lockSplitsNow;
+        string tokenUri;
+        string manifest; // canonical JSON; its sha256 is the committed manifest hash
+        SplitRecipient[] splits;
+    }
+
+    /// @dev EIP-3009 authorization fields for `collectWithAuthorization`, bundled for the same
+    ///      stack-limit reason.
+    struct Eip3009Auth {
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 salt; // uniquifier so repeated identical collects get distinct single-use nonces
+        bytes signature; // EIP-712 / EIP-1271 signature over receiveWithAuthorization
+    }
+
     // ============ State ============
 
     IERC20 public immutable usdc;
@@ -265,56 +287,53 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     ///         hash is derived on-chain from the emitted preimage, so the stored commitment and
     ///         the event preimage are provably the same object. Immutability is structural:
     ///         each call mints a fresh `songId`.
-    /// @param artist The credited artist (recorded as `songs[songId].artist`; controls splits).
-    /// @param manifest Canonical JSON (sorted keys, fixed whitespace) — its `sha256` is committed.
-    /// @param royaltyBps EIP-2981 royalty to the artist; 0 uses DEFAULT_ROYALTY_BPS.
-    function createSong(
-        address artist,
-        uint128 price,
-        uint128 maxSupply,
-        string calldata tokenUri,
-        string calldata manifest,
-        SplitRecipient[] calldata splits,
-        bool lockSplitsNow,
-        uint96 royaltyBps
-    ) external onlyOwner whenNotPaused returns (uint256 songId) {
-        if (artist == address(0)) revert ZeroAddress();
-        if (bytes(tokenUri).length == 0) revert TitleOrUriEmpty();
-        if (bytes(manifest).length == 0) revert EmptyManifest();
-        if (bytes(manifest).length > MAX_MANIFEST_BYTES) revert ManifestTooLong();
+    /// @param p Bundled creation params — see CreateSongParams. `p.artist` is the credited
+    ///          artist; `p.manifest` is canonical JSON (sorted keys, fixed whitespace) whose
+    ///          `sha256` is committed; `p.royaltyBps` 0 uses DEFAULT_ROYALTY_BPS.
+    function createSong(CreateSongParams calldata p)
+        external
+        onlyOwner
+        whenNotPaused
+        returns (uint256 songId)
+    {
+        if (p.artist == address(0)) revert ZeroAddress();
+        if (bytes(p.tokenUri).length == 0) revert TitleOrUriEmpty();
+        if (bytes(p.manifest).length == 0) revert EmptyManifest();
+        if (bytes(p.manifest).length > MAX_MANIFEST_BYTES) revert ManifestTooLong();
 
-        uint128 actualPrice = price == 0 ? defaultSongPrice : price;
+        uint128 actualPrice = p.price == 0 ? defaultSongPrice : p.price;
         if (actualPrice < MIN_SONG_PRICE) revert PriceBelowMinimum();
 
         songId = nextSongId++;
         songs[songId] = Song({
-            artist: artist,
+            artist: p.artist,
             exists: true,
             splitsLocked: false,
             price: actualPrice,
-            maxSupply: maxSupply,
+            maxSupply: p.maxSupply,
             currentSupply: 0
         });
-        tokenUris[songId] = tokenUri;
-        artistSongs[artist].push(songId);
+        tokenUris[songId] = p.tokenUri;
+        artistSongs[p.artist].push(songId);
 
-        bytes32 manifestHash = sha256(bytes(manifest)); // precompile 0x02, derive on-chain
+        bytes32 manifestHash = sha256(bytes(p.manifest)); // precompile 0x02, derive on-chain
         releaseManifest[songId] = manifestHash;
 
-        uint96 rbps = royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : royaltyBps;
-        _setTokenRoyalty(songId, artist, rbps);
+        _setTokenRoyalty(songId, p.artist, p.royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : p.royaltyBps);
 
-        if (splits.length > 0) {
-            _setSplits(songId, splits);
+        if (p.splits.length > 0) {
+            _setSplits(songId, p.splits);
         }
         // Lock applies even with no splits — lets an artist freeze a "100% to me" config immutably.
-        if (lockSplitsNow) {
+        if (p.lockSplitsNow) {
             songs[songId].splitsLocked = true;
             emit SplitsLocked(songId);
         }
 
-        emit SongCreated(songId, artist, manifestHash, actualPrice, maxSupply, tokenUri, manifest);
-        emit URI(tokenUri, songId);
+        emit SongCreated(
+            songId, p.artist, manifestHash, actualPrice, p.maxSupply, p.tokenUri, p.manifest
+        );
+        emit URI(p.tokenUri, songId);
     }
 
     function configureSplits(uint256 songId, SplitRecipient[] calldata splits)
@@ -365,17 +384,15 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     /// @param from The paying collector (authenticated by the EIP-3009 signature).
     /// @param mintTo Token recipient (must be explicit; it is bound into the signed nonce).
     /// @param totalCost The exact USDC authorized; must equal the live `quote`.
-    /// @param salt Uniquifier so repeated identical collects get distinct (single-use) nonces.
+    /// @param auth EIP-3009 authorization (validity window, salt, signature). `auth.salt`
+    ///             uniquifies repeated identical collects so their single-use nonces differ.
     function collectWithAuthorization(
         uint256 songId,
         uint256 quantity,
         address from,
         address mintTo,
         uint256 totalCost,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes32 salt,
-        bytes calldata receiveAuthSignature,
+        Eip3009Auth calldata auth,
         string calldata comment
     ) external nonReentrant whenNotPaused {
         if (mintTo == address(0)) revert ZeroAddress();
@@ -384,12 +401,13 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
 
         // Bind the comment into the nonce too, so a relayer on the sign-to-collect path cannot
         // substitute or strip the comment that gets attributed on-chain to `from`.
-        bytes32 nonce = collectNonce(songId, quantity, mintTo, totalCost, keccak256(bytes(comment)), salt);
+        bytes32 nonce =
+            collectNonce(songId, quantity, mintTo, totalCost, keccak256(bytes(comment)), auth.salt);
         // Pulls exactly `totalCost` USDC from `from` into this contract; USDC verifies `from`
         // signed over (from, this, totalCost, validAfter, validBefore, nonce). msg.sender==to
-        // is satisfied because this contract is the payee.
+        // holds because this contract is the payee.
         IEIP3009(address(usdc)).receiveWithAuthorization(
-            from, address(this), totalCost, validAfter, validBefore, nonce, receiveAuthSignature
+            from, address(this), totalCost, auth.validAfter, auth.validBefore, nonce, auth.signature
         );
         _processCollect(songId, quantity, mintTo, from, totalCost, comment);
     }
