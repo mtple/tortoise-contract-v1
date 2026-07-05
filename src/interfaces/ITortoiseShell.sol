@@ -2,7 +2,7 @@
 pragma solidity 0.8.34;
 
 /// @title ITortoiseShell (ETH-native)
-/// @notice Surface that `TortoiseInProcessMinter` depends on. Rewards are native ETH;
+/// @notice Surface that the Tortoise minter depends on. Rewards are native ETH;
 ///         `depositRewards` is payable and reconciles from `msg.value` / contract balance.
 interface ITortoiseShell {
     /// @notice Deposit native ETH rewards. The reward amount is reconciled from the

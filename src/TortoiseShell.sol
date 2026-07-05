@@ -239,7 +239,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit EmergencyWithdraw(msg.sender, amount);
     }
 
-    // ============ Called by TortoiseInProcessMinter ============
+    // ============ Called by the Tortoise minter ============
 
     function depositRewards() external payable onlyAuthorizedCaller updateReward(address(0)) {
         // Reconcile actual new ETH from balance vs cumulative deposit tracking. `actual`
