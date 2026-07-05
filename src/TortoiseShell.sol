@@ -6,74 +6,61 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 
-/// @title TortoiseShell (ETH-native)
-/// @notice TORT staking with native-ETH rewards (Synthetix-style drip) and automatic TORT
-///         crediting for collectors. ETH-native rewrite of the audited USDC v1 shell
-///         (`legacy/v1/src/TortoiseShell.sol`); no migration logic, no shared state.
-/// @dev `stakingToken` MUST be a standard ERC20 (non-rebasing, non-fee-on-transfer, no
-///      transfer hooks). Reward accounting assumes amount-transferred == amount-received.
-///      All reward amounts are native wei — no scaling.
-contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient, Pausable, EIP712 {
+contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient, Pausable {
     using SafeERC20 for IERC20;
 
-    // ============ Token ============
+    // ============ Tokens ============
 
     IERC20 public immutable stakingToken; // $TORT
+    IERC20 public immutable rewardToken; // USDC
+
+    error TokensMustDiffer();
 
     // ============ Staking ============
 
     mapping(address => uint256) public stakedBalance;
     uint256 public totalStaked;
 
-    // ============ ETH Rewards (Synthetix pattern, 7-day drip) ============
+    // ============ USDC Rewards (Synthetix pattern, 7-day drip) ============
 
-    uint256 public rewardRate; // wei per second
-    uint256 public rewardDuration; // e.g. 604800 (7 days)
+    uint256 public rewardRate; // USDC per second (scaled by rewardScalar)
+    uint256 public rewardDuration; // 604800 (7 days)
     uint256 public periodFinish;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
-    uint256 public reservedBalance; // ETH earned-but-unclaimed, reserved into a period (wei)
+    uint256 public reservedBalance; // USDC earned but not yet claimed
+    uint256 public constant REWARD_SCALAR = 1e12; // Scale 6-decimal USDC to 18 internally
     uint256 public constant MIN_REWARD_DURATION = 1 days;
     uint256 public constant MAX_REWARD_DURATION = 365 days;
     // Floor below which a deposit pools into _queuedReward instead of extending the
-    // period. Raises the cost of cap-and-extend griefing on rewardRate.
-    uint256 public constant MIN_REWARD_DEPOSIT = 1e15; // 0.001 ETH
-    uint256 public totalRewardsDeposited; // ETH accounted as still owed (wei; decreases on claim)
-    uint256 internal _queuedReward; // rewards queued while totalStaked == 0 or sub-floor (wei)
-    uint256 internal _queuedRewardUpdatedAt; // timestamp of last _queuedReward mutation
+    // period. Raises the cost of cap-and-extend griefing on rewardRate. Scaled (18-dec).
+    uint256 public constant MIN_REWARD_DEPOSIT = 1e6 * 1e12; // 1 USDC
+    uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
+    uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
+    uint256 internal _queuedRewardUpdatedAt; // Timestamp of last _queuedReward mutation; gates sub-floor flush
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public userUnpaidRewards;
 
     // ============ TORT Credit Pool ============
 
     uint256 public tortPool; // TORT available for crediting
-    uint256 public tortRewardPerCollection; // Fixed TORT per reward unit credited
+    uint256 public tortRewardPerCollection; // Fixed TORT per copy collected
     uint256 public totalTortCredited; // Lifetime tracking
 
     // ============ Access Control ============
 
     mapping(address => bool) public authorizedCallers;
 
-    // ============ Delegated reward claims (EIP-712) ============
-
-    mapping(address => uint256) public rewardClaimNonces;
-
-    bytes32 private constant _CLAIM_SHELL_REWARDS_TO_TYPEHASH = keccak256(
-        "ClaimShellRewardsTo(address user,address payoutTo,uint256 amount,uint256 nonce,uint256 deadline)"
-    );
-
     // ============ Events ============
 
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
-    event RewardsClaimed(address indexed user, address indexed payoutTo, uint256 amount);
-    event RewardsDeposited(uint256 actual, uint256 newRewardRate);
+    event RewardsClaimed(address indexed user, uint256 amount);
+    event RewardsDeposited(uint256 declared, uint256 actual, uint256 newRewardRate);
     event QueuedRewardFlushed(uint256 amount, uint256 newRewardRate);
-    event StakeCredited(address indexed user, uint256 amount, uint256 rewardUnits);
+    event StakeCredited(address indexed user, uint256 amount, uint256 quantity);
     event TortPoolFunded(uint256 amount, uint256 newPoolBalance);
     event TortPoolWithdrawn(uint256 amount, uint256 newPoolBalance);
     event TortRewardPerCollectionUpdated(uint256 oldAmount, uint256 newAmount);
@@ -81,7 +68,6 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     event AuthorizedCallerRemoved(address indexed caller);
     event RewardDurationUpdated(uint256 oldDuration, uint256 newDuration);
     event EmergencyWithdraw(address indexed user, uint256 amount);
-    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
 
     // ============ Errors ============
 
@@ -92,13 +78,10 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     error ZeroAddress();
     error RewardPeriodActive();
     error InvalidRewardDuration();
-    error CallerMustBeContract();
-    error RenouncingOwnershipDisabled();
-    error CannotRecoverStakingToken();
-    error ETHTransferFailed();
-    error RewardClaimExpired();
-    error InvalidRewardSignature();
-    error RewardNonceMismatch(uint256 expected, uint256 provided);
+
+    // ============ Events (admin) ============
+
+    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
 
     // ============ Modifiers ============
 
@@ -121,15 +104,25 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     // ============ Constructor ============
 
-    constructor(address _stakingToken, uint256 _rewardDuration)
-        Ownable(msg.sender)
-        EIP712("TortoiseShell", "1")
-    {
+    /// @dev Both `stakingToken` and `rewardToken` MUST be standard ERC20s:
+    /// non-rebasing, non-fee-on-transfer, non-reentrant (not ERC777), and without
+    /// transfer hooks. Accounting (`tortPool`, `stakedBalance`, `reservedBalance`,
+    /// `totalRewardsDeposited`) assumes `amount` transferred equals `amount` received.
+    /// Behavior is undefined under non-standard tokens.
+    constructor(
+        address _stakingToken,
+        address _rewardToken,
+        uint256 _rewardDuration
+    ) Ownable(msg.sender) {
         if (_stakingToken == address(0)) revert ZeroAddress();
+        if (_rewardToken == address(0)) revert ZeroAddress();
+        if (_stakingToken == _rewardToken) revert TokensMustDiffer();
+
+        stakingToken = IERC20(_stakingToken);
+        rewardToken = IERC20(_rewardToken);
         if (_rewardDuration < MIN_REWARD_DURATION || _rewardDuration > MAX_REWARD_DURATION) {
             revert InvalidRewardDuration();
         }
-        stakingToken = IERC20(_stakingToken);
         rewardDuration = _rewardDuration;
         emit RewardDurationUpdated(0, _rewardDuration);
     }
@@ -154,65 +147,26 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         _withdraw(msg.sender, amount);
     }
 
-    /// @notice Claim all accrued ETH rewards to the caller.
     function claimRewards() external nonReentrant updateReward(msg.sender) {
-        _claimRewards(msg.sender, msg.sender, userUnpaidRewards[msg.sender]);
-    }
-
-    /// @notice Claim `amount` of the caller's accrued ETH rewards to a chosen recipient.
-    /// @dev Lets stakers route rewards to a payable address (e.g. when staking from a
-    ///      contract wallet that cannot receive raw ETH).
-    function claimRewardsTo(address payoutTo, uint256 amount)
-        external
-        nonReentrant
-        updateReward(msg.sender)
-    {
-        _claimRewards(msg.sender, payoutTo, amount);
-    }
-
-    /// @notice Delegated claim: anyone may relay a claim authorized by `user` via EIP-712
-    ///         (or EIP-1271 for contract wallets). The amount is signed so an authorization
-    ///         cannot be replayed against future rewards; the nonce advances on every
-    ///         successful payout (direct or delegated), staling outstanding authorizations.
-    function claimRewardsWithAuthorization(
-        address user,
-        address payoutTo,
-        uint256 amount,
-        uint256 nonce,
-        uint256 deadline,
-        bytes calldata signature
-    ) external nonReentrant updateReward(user) {
-        if (block.timestamp > deadline) revert RewardClaimExpired();
-        if (nonce != rewardClaimNonces[user]) {
-            revert RewardNonceMismatch(rewardClaimNonces[user], nonce);
-        }
-        bytes32 digest = _hashTypedDataV4(
-            keccak256(
-                abi.encode(
-                    _CLAIM_SHELL_REWARDS_TO_TYPEHASH, user, payoutTo, amount, nonce, deadline
-                )
-            )
-        );
-        if (!SignatureChecker.isValidSignatureNowCalldata(user, digest, signature)) {
-            revert InvalidRewardSignature();
-        }
-        _claimRewards(user, payoutTo, amount);
+        _claimRewards(msg.sender);
     }
 
     function exit() external nonReentrant updateReward(msg.sender) {
         _withdraw(msg.sender, stakedBalance[msg.sender]);
-        _claimRewards(msg.sender, msg.sender, userUnpaidRewards[msg.sender]);
+        _claimRewards(msg.sender);
     }
 
     function emergencyWithdraw() external nonReentrant updateReward(msg.sender) {
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued ETH rewards. Release the accrual slot (reservedBalance) so
-        // the forfeited ETH is recycled into future rewards via the next depositRewards
-        // (balance - totalRewardsDeposited picks it up as excess). totalRewardsDeposited is
-        // intentionally NOT decremented: no ETH leaves here, so the liability remains owed
-        // to the reward pool as a whole. Decrementing would double-count on next deposit.
+        // Forfeit all accrued USDC rewards. Release the accrual slot
+        // (reservedBalance) so the forfeited USDC is recycled into future
+        // rewards via the next depositRewards (balanceOf - totalRewardsDeposited
+        // picks it up as excess). totalRewardsDeposited is intentionally NOT
+        // decremented: no USDC leaves the contract here, so the liability
+        // remains owed to the reward pool as a whole. Decrementing it would
+        // double-count the recycled USDC on the next deposit.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
@@ -222,8 +176,8 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         stakedBalance[msg.sender] = 0;
         totalStaked -= amount;
 
-        // If all stakers have exited mid-period, queue remaining rewards so they aren't
-        // lost emitting into a zero-totalStaked void.
+        // If all stakers have exited mid-period, queue remaining rewards
+        // so they aren't lost emitting into a zero-totalStaked void.
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             if (remaining > 0) {
@@ -239,30 +193,27 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit EmergencyWithdraw(msg.sender, amount);
     }
 
-    // ============ Called by the Tortoise minter ============
+    // ============ Called by TortoiseV1 ============
 
-    function depositRewards() external payable onlyAuthorizedCaller updateReward(address(0)) {
-        // Reconcile actual new ETH from balance vs cumulative deposit tracking. `actual`
-        // may exceed msg.value when forfeited rewards (recycled via emergencyWithdraw) or
-        // stray ETH are being swept in. Staking is TORT (a separate ERC20 balance), so the
-        // ETH balance reflects rewards only.
-        uint256 currentBalance = address(this).balance;
-        uint256 actual =
-            currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
+    function depositRewards(uint256 amount) external onlyAuthorizedCaller updateReward(address(0)) {
+        // Calculate actual new USDC from balance vs cumulative deposit tracking.
+        // Using totalRewardsDeposited instead of reservedBalance/REWARD_SCALAR avoids
+        // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
+        // `actual` may exceed `amount` when forfeited rewards are being recycled.
+        uint256 currentBalance = rewardToken.balanceOf(address(this));
+        uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
         if (actual == 0) return;
         totalRewardsDeposited += actual;
         _addReward(actual);
-        emit RewardsDeposited(actual, rewardRate);
+        emit RewardsDeposited(amount, actual, rewardRate);
     }
 
-    function creditStake(address user, uint256 rewardUnits)
-        external
-        onlyAuthorizedCaller
-        updateReward(user)
-        returns (uint256 credited)
-    {
+    function creditStake(
+        address user,
+        uint256 quantity
+    ) external onlyAuthorizedCaller updateReward(user) returns (uint256 credited) {
         if (user == address(0)) revert ZeroAddress();
-        uint256 creditAmount = rewardUnits * tortRewardPerCollection;
+        uint256 creditAmount = quantity * tortRewardPerCollection;
 
         // Graceful degradation — never revert, never block mints
         if (creditAmount > tortPool) {
@@ -279,7 +230,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             _flushQueuedReward();
         }
 
-        emit StakeCredited(user, creditAmount, rewardUnits);
+        emit StakeCredited(user, creditAmount, quantity);
         return creditAmount;
     }
 
@@ -302,22 +253,15 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
             / 1e18 + userUnpaidRewards[account];
     }
 
-    /// @notice ETH rewards currently claimable by `user` (accrued + previously settled).
-    function claimableRewards(address user) external view returns (uint256) {
-        return earned(user);
-    }
-
     function balanceOf(address user) external view returns (uint256) {
         return stakedBalance[user];
     }
 
-    function getUserStats(address user)
-        external
-        view
-        returns (uint256 stakedAmount, uint256 pendingEthRewards, uint256 shareOfPool)
-    {
+    function getUserStats(
+        address user
+    ) external view returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool) {
         stakedAmount = stakedBalance[user];
-        pendingEthRewards = earned(user);
+        pendingUsdcRewards = earned(user) / REWARD_SCALAR;
         shareOfPool = totalStaked == 0 ? 0 : (stakedAmount * 1e18) / totalStaked;
     }
 
@@ -355,18 +299,18 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
     function addAuthorizedCaller(address caller) external onlyOwner {
         if (caller == address(0)) revert ZeroAddress();
-        if (caller.code.length == 0) revert CallerMustBeContract();
+        require(caller.code.length > 0, "Caller must be a contract");
         authorizedCallers[caller] = true;
         emit AuthorizedCallerAdded(caller);
+    }
+
+    function renounceOwnership() public view override onlyOwner {
+        revert("Renouncing ownership disabled");
     }
 
     function removeAuthorizedCaller(address caller) external onlyOwner {
         authorizedCallers[caller] = false;
         emit AuthorizedCallerRemoved(caller);
-    }
-
-    function renounceOwnership() public view override onlyOwner {
-        revert RenouncingOwnershipDisabled();
     }
 
     function updateRewardDuration(uint256 newDuration) external onlyOwner {
@@ -386,10 +330,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         _unpause();
     }
 
-    /// @notice Recover stray ERC20s. The staking token cannot be recovered. There is no
-    ///         ETH recovery path — ETH is reward liability and is swept into reward periods.
     function recoverTokens(address token, uint256 amount) external onlyOwner nonReentrant {
-        if (token == address(stakingToken)) revert CannotRecoverStakingToken();
+        require(token != address(stakingToken), "Cannot recover staking token");
+        require(token != address(rewardToken), "Cannot recover reward token");
         IERC20(token).safeTransfer(owner(), amount);
         emit TokensRecovered(token, owner(), amount);
     }
@@ -403,8 +346,8 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         stakedBalance[user] -= amount;
         totalStaked -= amount;
 
-        // If all stakers have exited mid-period, queue remaining rewards so they aren't
-        // lost emitting into a zero-totalStaked void.
+        // If all stakers have exited mid-period, queue remaining rewards
+        // so they aren't lost emitting into a zero-totalStaked void.
         if (totalStaked == 0 && block.timestamp < periodFinish) {
             uint256 remaining = (periodFinish - block.timestamp) * rewardRate;
             if (remaining > 0) {
@@ -420,38 +363,36 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         emit Withdrawn(user, amount);
     }
 
-    /// @dev Debit exactly `amount` from `user`'s settled rewards and send it to `payoutTo`.
-    ///      Reverts on a failed ETH send (unlike the minter's deferral path) — the claimer
-    ///      can retry with a different `payoutTo`. Advances the user's claim nonce on every
-    ///      successful payout so outstanding delegated authorizations go stale.
-    function _claimRewards(address user, address payoutTo, uint256 amount) internal {
-        if (amount == 0) return;
-        if (amount > userUnpaidRewards[user]) revert InsufficientBalance();
-        if (payoutTo == address(0)) revert ZeroAddress();
+    function _claimRewards(address user) internal {
+        uint256 reward = userUnpaidRewards[user];
+        if (reward == 0) return;
 
-        userUnpaidRewards[user] -= amount;
-        reservedBalance -= amount;
-        totalRewardsDeposited -= amount;
-        rewardClaimNonces[user] += 1;
+        // Descale from 18 decimals back to 6
+        uint256 payout = reward / REWARD_SCALAR;
+        if (payout == 0) return; // dust remains in userUnpaidRewards for next claim
 
-        (bool ok,) = payoutTo.call{value: amount}("");
-        if (!ok) revert ETHTransferFailed();
-
-        emit RewardsClaimed(user, payoutTo, amount);
+        uint256 exactPaid = payout * REWARD_SCALAR;
+        userUnpaidRewards[user] = reward - exactPaid;
+        reservedBalance -= exactPaid;
+        totalRewardsDeposited -= payout;
+        rewardToken.safeTransfer(user, payout);
+        emit RewardsClaimed(user, payout);
     }
 
     function _addReward(uint256 reward) internal {
-        // Queue rewards when no one is staked — rewardPerToken won't accumulate with
-        // totalStaked == 0, so these rewards would be permanently lost.
+        reward *= REWARD_SCALAR;
+
+        // Queue rewards when no one is staked — rewardPerToken won't accumulate
+        // with totalStaked == 0, so these rewards would be permanently lost.
         if (totalStaked == 0) {
             _queuedReward += reward;
             _queuedRewardUpdatedAt = block.timestamp;
             return;
         }
 
-        // Pool with any previously-queued rewards, then only flush into a rate recalc if
-        // the aggregate crosses MIN_REWARD_DEPOSIT. Sub-threshold flows stay queued and
-        // fold into the next qualifying deposit.
+        // Pool with any previously-queued rewards, then only flush into a rate
+        // recalc if the aggregate crosses MIN_REWARD_DEPOSIT. Sub-threshold flows
+        // stay in _queuedReward and fold into the next qualifying deposit.
         uint256 pooled = reward + _queuedReward;
         if (pooled < MIN_REWARD_DEPOSIT) {
             _queuedReward = pooled;
@@ -477,11 +418,12 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 queued = _queuedReward;
         if (queued == 0) return;
 
-        // Mirror _addReward's MIN_REWARD_DEPOSIT floor at the flush boundary — otherwise
-        // sub-floor amounts queued via mid-period exits can be flushed by a single-wei
-        // stake into a full fresh period, reproducing the cap-and-extend dilution shape the
-        // floor prevents. Aged queues (sat >= rewardDuration) escape the gate so
-        // low-activity periods can't trap rewards indefinitely.
+        // Mirror _addReward's MIN_REWARD_DEPOSIT floor at the flush boundary —
+        // otherwise sub-floor amounts queued via mid-period exits (emergencyWithdraw
+        // / _withdraw last-staker branch) can be flushed by a single-wei stake into
+        // a full fresh period, reproducing the cap-and-extend dilution shape the
+        // floor is meant to prevent. Aged queues (sat ≥ rewardDuration) escape the
+        // gate so low-activity periods can't trap rewards indefinitely.
         bool aged = block.timestamp >= _queuedRewardUpdatedAt + rewardDuration;
         if (queued < MIN_REWARD_DEPOSIT && !aged) return;
 
@@ -491,9 +433,12 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         if (block.timestamp >= periodFinish) {
             rewardRate = queued / rewardDuration;
         } else {
-            // Defensive branch, symmetric with _addReward's mid-period path. Under current
-            // semantics this is unreachable — every path that queues rewards either exits
-            // the period or comes from an above-floor deposit during totalStaked == 0.
+            // Defensive branch: symmetric with _addReward's mid-period path.
+            // Under current semantics this is unreachable — every path that
+            // queues rewards either exits the period (pulling periodFinish
+            // to block.timestamp on last-staker exit) or comes from an
+            // above-floor deposit during totalStaked==0 (no active period).
+            // Kept for symmetry and future-proofing.
             uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
             rewardRate = (queued + leftover) / rewardDuration;
@@ -502,12 +447,5 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         periodFinish = block.timestamp + rewardDuration;
         reservedBalance += queued;
         emit QueuedRewardFlushed(queued, rewardRate);
-    }
-
-    /// @notice Accept ETH only from authorized callers (e.g. the minter). Plain sends are
-    ///         rejected; any ETH that still lands (e.g. via selfdestruct) is swept into the
-    ///         next reward period by the depositRewards reconciliation.
-    receive() external payable {
-        if (!authorizedCallers[msg.sender]) revert UnauthorizedCaller();
     }
 }
