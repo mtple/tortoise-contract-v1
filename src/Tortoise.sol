@@ -331,11 +331,9 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
             revert NonceMismatch(createSongNonces[p.artist], nonce);
         }
         bytes32 manifestHash = sha256(bytes(p.manifest));
-        if (
-            !SignatureChecker.isValidSignatureNowCalldata(
+        if (!SignatureChecker.isValidSignatureNowCalldata(
                 p.artist, _createSongDigest(p, manifestHash, nonce, deadline), artistSignature
-            )
-        ) revert InvalidCreateSignature();
+            )) revert InvalidCreateSignature();
         createSongNonces[p.artist] = nonce + 1;
         songId = _createSong(p, manifestHash);
     }
