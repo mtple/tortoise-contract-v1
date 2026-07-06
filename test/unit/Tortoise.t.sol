@@ -90,11 +90,12 @@ contract TortoiseTest is Test {
         );
     }
 
-    function _signCreate(uint256 pk, Tortoise.CreateSongParams memory p, uint256 nonce, uint256 deadline)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _signCreate(
+        uint256 pk,
+        Tortoise.CreateSongParams memory p,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
             abi.encode(
                 CREATE_SONG_TYPEHASH,
