@@ -41,6 +41,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     uint256 public constant MAX_MINT_QUANTITY = 100_000;
     uint256 public constant MAX_COMMENT_BYTES = 500;
     uint256 public constant MAX_MANIFEST_BYTES = 2_048;
+    uint256 public constant MAX_BATCH_ITEMS = 20;
     uint256 public constant REROUTE_DELAY = 90 days;
     uint128 public constant MIN_SONG_PRICE = 100_000; // $0.10 (USDC, 6 decimals)
     uint128 public constant DEFAULT_SONG_PRICE = 1_000_000; // $1.00
@@ -48,6 +49,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     /// @dev Domain tag folded into the EIP-3009 nonce so a signed collect authorization is
     ///      bound to this contract + chain and cannot be replayed elsewhere.
     bytes32 private constant _COLLECT_NONCE_PREFIX = keccak256("TortoiseCollectV1");
+    bytes32 private constant _BATCH_NONCE_PREFIX = keccak256("TortoiseBatchCollectV1");
 
     bytes32 private constant _CREATE_SONG_TYPEHASH = keccak256(
         "CreateSong(address artist,uint128 price,uint128 maxSupply,uint96 royaltyBps,bool lockSplitsNow,bytes32 tokenUriHash,bytes32 manifestHash,bytes32 splitsHash,uint256 nonce,uint256 deadline)"
@@ -84,6 +86,13 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint256 validBefore;
         bytes32 salt; // uniquifier so repeated identical collects get distinct single-use nonces
         bytes signature; // EIP-712 / EIP-1271 signature over receiveWithAuthorization
+    }
+
+    struct BatchItem {
+        uint256 songId;
+        uint256 quantity;
+        address mintTo; // address(0) defaults to the payer
+        string comment;
     }
 
     // ============ State ============
@@ -196,6 +205,8 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     error SignatureExpired();
     error NonceMismatch(uint256 expected, uint256 provided);
     error InvalidCreateSignature();
+    error EmptyBatch();
+    error BatchTooLarge(uint256 provided, uint256 max);
 
     // ============ Constructor ============
 
@@ -421,6 +432,66 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         _processCollect(songId, quantity, mintTo, from, totalCost, comment);
     }
 
+    // ============ Batch collect ============
+
+    /// @notice The EIP-3009 nonce for `batchCollectWithAuthorization`. Binds the whole batch
+    ///         (every item, incl. mintTo and comment), the payer, and the total, so a relayer
+    ///         cannot alter any of them. `salt` uniquifies repeated identical batches.
+    function batchCollectNonce(
+        BatchItem[] calldata items,
+        address from,
+        uint256 totalCost,
+        bytes32 salt
+    ) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _BATCH_NONCE_PREFIX,
+                block.chainid,
+                address(this),
+                keccak256(abi.encode(items)),
+                from,
+                totalCost,
+                salt
+            )
+        );
+    }
+
+    /// @notice Collect several items in one tx via approve/transferFrom. All-or-nothing.
+    /// @param maxAggregateCost Front-run guard on the batch total.
+    function batchCollect(BatchItem[] calldata items, uint256 maxAggregateCost)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        (uint256[] memory costs, uint256 aggregate) = _batchQuote(items);
+        if (aggregate > maxAggregateCost) revert MaxCostExceeded(aggregate, maxAggregateCost);
+        usdc.safeTransferFrom(msg.sender, address(this), aggregate);
+        _batchProcess(items, costs, msg.sender);
+    }
+
+    /// @notice Batch sign-to-collect: one EIP-3009 authorization for the aggregate, bound to the
+    ///         whole batch via `batchCollectNonce`. Relayable; the payer needs no ETH.
+    function batchCollectWithAuthorization(
+        BatchItem[] calldata items,
+        address from,
+        uint256 totalCost,
+        Eip3009Auth calldata auth
+    ) external nonReentrant whenNotPaused {
+        (uint256[] memory costs, uint256 aggregate) = _batchQuote(items);
+        if (aggregate != totalCost) revert IncorrectAuthorizedValue(aggregate, totalCost);
+        bytes32 nonce = batchCollectNonce(items, from, totalCost, auth.salt);
+        IEIP3009(address(usdc)).receiveWithAuthorization(
+            from,
+            address(this),
+            totalCost,
+            auth.validAfter,
+            auth.validBefore,
+            nonce,
+            auth.signature
+        );
+        _batchProcess(items, costs, from);
+    }
+
     // ============ Admin ============
 
     function updatePlatformFeeBps(uint16 newBps) external onlyOwner {
@@ -614,6 +685,40 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
             revert ExceedsMaxSupply();
         }
         totalCost = uint256(s.price) * quantity;
+    }
+
+    function _batchQuote(BatchItem[] calldata items)
+        internal
+        view
+        returns (uint256[] memory costs, uint256 aggregate)
+    {
+        uint256 n = items.length;
+        if (n == 0) revert EmptyBatch();
+        if (n > MAX_BATCH_ITEMS) revert BatchTooLarge(n, MAX_BATCH_ITEMS);
+        costs = new uint256[](n);
+        for (uint256 i; i < n;) {
+            BatchItem calldata it = items[i];
+            uint256 c = _validateAndQuote(it.songId, it.quantity, it.comment);
+            costs[i] = c;
+            aggregate += c;
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _batchProcess(BatchItem[] calldata items, uint256[] memory costs, address payer)
+        internal
+    {
+        uint256 n = items.length;
+        for (uint256 i; i < n;) {
+            BatchItem calldata it = items[i];
+            address recipient = it.mintTo == address(0) ? payer : it.mintTo;
+            _processCollect(it.songId, it.quantity, recipient, payer, costs[i], it.comment);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /// @dev Caller has already validated and moved `totalCost` USDC into this contract.

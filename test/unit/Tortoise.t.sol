@@ -518,6 +518,94 @@ contract TortoiseTest is Test {
         tortoise.recoverTokens(address(usdc), 1);
     }
 
+    // ----------------------------------------------------------------- batchCollect
+
+    function test_batchCollect_happy() public {
+        uint256 id0 = _createSong(artist);
+        uint256 id1 = _createSong(artist);
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](2);
+        items[0].songId = id0;
+        items[0].quantity = 2;
+        items[0].mintTo = collector;
+        items[1].songId = id1;
+        items[1].quantity = 1;
+        items[1].mintTo = collector;
+        uint256 total = uint256(PRICE) * 3;
+        _fundCollector(total);
+        vm.prank(collector);
+        tortoise.batchCollect(items, total);
+        assertEq(tortoise.balanceOf(collector, id0), 2);
+        assertEq(tortoise.balanceOf(collector, id1), 1);
+        assertEq(usdc.balanceOf(collector), 0);
+    }
+
+    function test_batchCollect_emptyReverts() public {
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](0);
+        vm.expectRevert(Tortoise.EmptyBatch.selector);
+        tortoise.batchCollect(items, 0);
+    }
+
+    function test_batchCollect_maxAggregateReverts() public {
+        uint256 id = _createSong(artist);
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](1);
+        items[0].songId = id;
+        items[0].quantity = 1;
+        items[0].mintTo = collector;
+        uint256 cost = uint256(PRICE);
+        _fundCollector(cost);
+        bytes memory err =
+            abi.encodeWithSelector(Tortoise.MaxCostExceeded.selector, cost, cost - 1);
+        vm.prank(collector);
+        vm.expectRevert(err);
+        tortoise.batchCollect(items, cost - 1);
+    }
+
+    function test_batchCollectAuth_happy() public {
+        uint256 id0 = _createSong(artist);
+        uint256 id1 = _createSong(artist);
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](2);
+        items[0].songId = id0;
+        items[0].quantity = 1;
+        items[0].mintTo = collector;
+        items[1].songId = id1;
+        items[1].quantity = 1;
+        items[1].mintTo = collector;
+        uint256 total = uint256(PRICE) * 2;
+        usdc.mint(collector, total);
+        uint256 vb = block.timestamp + 1 hours;
+        bytes32 nonce = tortoise.batchCollectNonce(items, collector, total, bytes32("b1"));
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
+        Tortoise.Eip3009Auth memory auth = Tortoise.Eip3009Auth({
+            validAfter: 0, validBefore: vb, salt: bytes32("b1"), signature: sig
+        });
+        tortoise.batchCollectWithAuthorization(items, collector, total, auth);
+        assertEq(tortoise.balanceOf(collector, id0), 1);
+        assertEq(tortoise.balanceOf(collector, id1), 1);
+    }
+
+    function test_batchCollectAuth_relayerCannotAlterItem() public {
+        uint256 id0 = _createSong(artist);
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](1);
+        items[0].songId = id0;
+        items[0].quantity = 1;
+        items[0].mintTo = collector;
+        uint256 total = uint256(PRICE);
+        usdc.mint(collector, total);
+        uint256 vb = block.timestamp + 1 hours;
+        bytes32 nonce = tortoise.batchCollectNonce(items, collector, total, bytes32("b"));
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
+        Tortoise.Eip3009Auth memory auth = Tortoise.Eip3009Auth({
+            validAfter: 0, validBefore: vb, salt: bytes32("b"), signature: sig
+        });
+        // Relayer swaps an item's mintTo -> keccak(items) changes -> nonce changes -> bad sig.
+        items[0].mintTo = stranger;
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "MockUSDC: invalid signature"));
+        tortoise.batchCollectWithAuthorization(items, collector, total, auth);
+    }
+
     // ----------------------------------------------------------------- fuzz
 
     /// @dev Fee waterfall conserves value: platform + staking + artist == totalCost, exactly,
