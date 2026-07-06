@@ -110,7 +110,8 @@ contract TortoiseTest is Test {
                 deadline
             )
         );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _tortoiseDomainSeparator(), structHash));
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19\x01", _tortoiseDomainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -126,7 +127,13 @@ contract TortoiseTest is Test {
     ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
             abi.encode(
-                usdc.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), from, to, value, validAfter, validBefore, nonce
+                usdc.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(),
+                from,
+                to,
+                value,
+                validAfter,
+                validBefore,
+                nonce
             )
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.domainSeparator(), structHash));
@@ -157,7 +164,9 @@ contract TortoiseTest is Test {
 
     function test_createSong_onlyOwner() public {
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger)
+        );
         tortoise.createSong(_params(artist));
     }
 
@@ -304,12 +313,19 @@ contract TortoiseTest is Test {
 
     // ----------------------------------------------------------------- collect (EIP-3009 path)
 
-    function _collectAuth(uint256 id, uint256 qty, address mintTo, uint256 total, bytes32 salt, string memory comment)
-        internal
-    {
+    function _collectAuth(
+        uint256 id,
+        uint256 qty,
+        address mintTo,
+        uint256 total,
+        bytes32 salt,
+        string memory comment
+    ) internal {
         uint256 vb = block.timestamp + 1 hours;
-        bytes32 nonce = tortoise.collectNonce(id, qty, mintTo, total, keccak256(bytes(comment)), salt);
-        bytes memory sig = _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
+        bytes32 nonce =
+            tortoise.collectNonce(id, qty, mintTo, total, keccak256(bytes(comment)), salt);
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
         Tortoise.Eip3009Auth memory auth =
             Tortoise.Eip3009Auth({validAfter: 0, validBefore: vb, salt: salt, signature: sig});
         tortoise.collectWithAuthorization(id, qty, collector, mintTo, total, auth, comment);
@@ -334,10 +350,13 @@ contract TortoiseTest is Test {
 
         // Collector signs for mintTo = collector.
         uint256 vb = block.timestamp + 1 hours;
-        bytes32 nonce = tortoise.collectNonce(id, qty, collector, total, keccak256(bytes("")), bytes32("s"));
-        bytes memory sig = _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
-        Tortoise.Eip3009Auth memory auth =
-            Tortoise.Eip3009Auth({validAfter: 0, validBefore: vb, salt: bytes32("s"), signature: sig});
+        bytes32 nonce =
+            tortoise.collectNonce(id, qty, collector, total, keccak256(bytes("")), bytes32("s"));
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
+        Tortoise.Eip3009Auth memory auth = Tortoise.Eip3009Auth({
+            validAfter: 0, validBefore: vb, salt: bytes32("s"), signature: sig
+        });
 
         // Relayer submits with mintTo = stranger; contract recomputes a different nonce, so the
         // signature no longer verifies inside the token.
@@ -351,11 +370,16 @@ contract TortoiseTest is Test {
         uint256 total = uint256(PRICE);
         usdc.mint(collector, total);
         uint256 vb = block.timestamp + 1 hours;
-        bytes32 nonce = tortoise.collectNonce(id, 1, collector, total + 1, keccak256(bytes("")), bytes32("s"));
-        bytes memory sig = _signReceive(collectorPk, collector, address(tortoise), total + 1, 0, vb, nonce);
-        Tortoise.Eip3009Auth memory auth =
-            Tortoise.Eip3009Auth({validAfter: 0, validBefore: vb, salt: bytes32("s"), signature: sig});
-        vm.expectRevert(abi.encodeWithSelector(Tortoise.IncorrectAuthorizedValue.selector, total, total + 1));
+        bytes32 nonce =
+            tortoise.collectNonce(id, 1, collector, total + 1, keccak256(bytes("")), bytes32("s"));
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total + 1, 0, vb, nonce);
+        Tortoise.Eip3009Auth memory auth = Tortoise.Eip3009Auth({
+            validAfter: 0, validBefore: vb, salt: bytes32("s"), signature: sig
+        });
+        vm.expectRevert(
+            abi.encodeWithSelector(Tortoise.IncorrectAuthorizedValue.selector, total, total + 1)
+        );
         tortoise.collectWithAuthorization(id, 1, collector, collector, total + 1, auth, "");
     }
 
@@ -366,10 +390,13 @@ contract TortoiseTest is Test {
         _collectAuth(id, 1, collector, total, bytes32("dup"), "");
         // Same params + same salt -> same nonce -> USDC rejects reuse.
         uint256 vb = block.timestamp + 1 hours;
-        bytes32 nonce = tortoise.collectNonce(id, 1, collector, total, keccak256(bytes("")), bytes32("dup"));
-        bytes memory sig = _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
-        Tortoise.Eip3009Auth memory auth =
-            Tortoise.Eip3009Auth({validAfter: 0, validBefore: vb, salt: bytes32("dup"), signature: sig});
+        bytes32 nonce =
+            tortoise.collectNonce(id, 1, collector, total, keccak256(bytes("")), bytes32("dup"));
+        bytes memory sig =
+            _signReceive(collectorPk, collector, address(tortoise), total, 0, vb, nonce);
+        Tortoise.Eip3009Auth memory auth = Tortoise.Eip3009Auth({
+            validAfter: 0, validBefore: vb, salt: bytes32("dup"), signature: sig
+        });
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "MockUSDC: authorization used"));
         tortoise.collectWithAuthorization(id, 1, collector, collector, total, auth, "");
     }
