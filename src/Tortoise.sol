@@ -275,6 +275,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
                 address(this),
                 songId,
                 quantity,
+                mintTo,
                 totalCost,
                 commentHash,
                 salt
@@ -647,7 +648,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         internal
         returns (bool stakingFeeForwarded)
     {
-        uint256 platformFee = 0; // MUTATION: break platform fee allocation
+        uint256 platformFee = (totalCost * platformFeeBps) / BPS;
         uint256 stakingFee = (totalCost * stakingFeeBps) / BPS;
         uint256 artistRevenue = totalCost - platformFee - stakingFee; // remainder — no dust leaks
 
