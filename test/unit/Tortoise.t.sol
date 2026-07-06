@@ -157,7 +157,7 @@ contract TortoiseTest is Test {
 
     function test_createSong_onlyOwner() public {
         vm.prank(stranger);
-        vm.expectRevert(Ownable.OwnableUnauthorizedAccount.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
         tortoise.createSong(_params(artist));
     }
 
@@ -258,7 +258,7 @@ contract TortoiseTest is Test {
         uint256 total = uint256(PRICE);
         _fundCollector(total);
         vm.prank(collector);
-        vm.expectRevert(Tortoise.MaxCostExceeded.selector);
+        vm.expectRevert(abi.encodeWithSelector(Tortoise.MaxCostExceeded.selector, total, total - 1));
         tortoise.collect(id, 1, collector, total - 1, "");
     }
 
@@ -355,7 +355,7 @@ contract TortoiseTest is Test {
         bytes memory sig = _signReceive(collectorPk, collector, address(tortoise), total + 1, 0, vb, nonce);
         Tortoise.Eip3009Auth memory auth =
             Tortoise.Eip3009Auth({validAfter: 0, validBefore: vb, salt: bytes32("s"), signature: sig});
-        vm.expectRevert(Tortoise.IncorrectAuthorizedValue.selector);
+        vm.expectRevert(abi.encodeWithSelector(Tortoise.IncorrectAuthorizedValue.selector, total, total + 1));
         tortoise.collectWithAuthorization(id, 1, collector, collector, total + 1, auth, "");
     }
 
