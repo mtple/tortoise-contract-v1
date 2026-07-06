@@ -553,8 +553,7 @@ contract TortoiseTest is Test {
         items[0].mintTo = collector;
         uint256 cost = uint256(PRICE);
         _fundCollector(cost);
-        bytes memory err =
-            abi.encodeWithSelector(Tortoise.MaxCostExceeded.selector, cost, cost - 1);
+        bytes memory err = abi.encodeWithSelector(Tortoise.MaxCostExceeded.selector, cost, cost - 1);
         vm.prank(collector);
         vm.expectRevert(err);
         tortoise.batchCollect(items, cost - 1);

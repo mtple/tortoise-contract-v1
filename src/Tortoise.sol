@@ -480,15 +480,16 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         (uint256[] memory costs, uint256 aggregate) = _batchQuote(items);
         if (aggregate != totalCost) revert IncorrectAuthorizedValue(aggregate, totalCost);
         bytes32 nonce = batchCollectNonce(items, from, totalCost, auth.salt);
-        IEIP3009(address(usdc)).receiveWithAuthorization(
-            from,
-            address(this),
-            totalCost,
-            auth.validAfter,
-            auth.validBefore,
-            nonce,
-            auth.signature
-        );
+        IEIP3009(address(usdc))
+            .receiveWithAuthorization(
+                from,
+                address(this),
+                totalCost,
+                auth.validAfter,
+                auth.validBefore,
+                nonce,
+                auth.signature
+            );
         _batchProcess(items, costs, from);
     }
 
