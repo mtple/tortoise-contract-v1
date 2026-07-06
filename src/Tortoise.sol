@@ -11,6 +11,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SplitRecipient, SplitLib} from "./libraries/SplitLib.sol";
 import {ITortoiseShell} from "./interfaces/ITortoiseShell.sol";
 import {IEIP3009} from "./interfaces/IEIP3009.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 /// @title Tortoise
 /// @notice Custom Tortoise music ERC-1155. A single Tortoise-owned contract that is the
@@ -23,7 +25,7 @@ import {IEIP3009} from "./interfaces/IEIP3009.sol";
 /// @dev The manifest hash is the one load-bearing verifiability guarantee: a collector can
 ///      prove they hold the real release by recomputing `sha256` of the master against the
 ///      `audioSha256` inside the committed manifest — without trusting Tortoise.
-contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, Pausable {
+contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, Pausable, EIP712 {
     using SafeERC20 for IERC20;
     using SplitLib for SplitRecipient[];
 
@@ -46,6 +48,10 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     /// @dev Domain tag folded into the EIP-3009 nonce so a signed collect authorization is
     ///      bound to this contract + chain and cannot be replayed elsewhere.
     bytes32 private constant _COLLECT_NONCE_PREFIX = keccak256("TortoiseCollectV1");
+
+    bytes32 private constant _CREATE_SONG_TYPEHASH = keccak256(
+        "CreateSong(address artist,uint128 price,uint128 maxSupply,uint96 royaltyBps,bool lockSplitsNow,bytes32 tokenUriHash,bytes32 manifestHash,bytes32 splitsHash,uint256 nonce,uint256 deadline)"
+    );
 
     // ============ Types ============
 
@@ -94,6 +100,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     mapping(uint256 => SplitRecipient[]) internal songSplits;
     mapping(uint256 => string) internal tokenUris;
     mapping(address => uint256[]) public artistSongs;
+    mapping(address => uint256) public createSongNonces; // per-artist nonce for signed creation
 
     // Pull-payment (blocklisted recipients): USDC held for later claim.
     mapping(uint256 => mapping(address => uint256)) public pendingClaims;
@@ -186,13 +193,20 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     error SelfReroute();
     error CannotRecoverUSDC();
     error RenounceDisabled();
+    error SignatureExpired();
+    error NonceMismatch(uint256 expected, uint256 provided);
+    error InvalidCreateSignature();
 
     // ============ Constructor ============
 
     /// @dev `_usdc` and the shell's staking/reward tokens MUST be standard ERC20s
     ///      (non-rebasing, non-fee-on-transfer, non-ERC777, no transfer hooks). Accounting
     ///      assumes amount-sent == amount-received. Behavior is undefined otherwise.
-    constructor(address _usdc, address _shell) ERC1155("") Ownable(msg.sender) {
+    constructor(address _usdc, address _shell)
+        ERC1155("")
+        Ownable(msg.sender)
+        EIP712("Tortoise", "1")
+    {
         if (_usdc == address(0)) revert ZeroAddress();
         usdc = IERC20(_usdc);
         shell = ITortoiseShell(_shell); // may be address(0) — shell integration is optional
@@ -287,53 +301,43 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     ///         hash is derived on-chain from the emitted preimage, so the stored commitment and
     ///         the event preimage are provably the same object. Immutability is structural:
     ///         each call mints a fresh `songId`.
-    /// @param p Bundled creation params — see CreateSongParams. `p.artist` is the credited
-    ///          artist; `p.manifest` is canonical JSON (sorted keys, fixed whitespace) whose
-    ///          `sha256` is committed; `p.royaltyBps` 0 uses DEFAULT_ROYALTY_BPS.
+    /// @notice Operator-created song — the operator asserts `p.artist`. Use
+    ///         `createSongWithArtistSignature` when the artist should cryptographically attest.
+    /// @param p Bundled creation params — see CreateSongParams. `p.manifest` is canonical JSON
+    ///          whose `sha256` is committed; `p.royaltyBps` 0 uses DEFAULT_ROYALTY_BPS.
     function createSong(CreateSongParams calldata p)
         external
         onlyOwner
         whenNotPaused
         returns (uint256 songId)
     {
-        if (p.artist == address(0)) revert ZeroAddress();
-        if (bytes(p.tokenUri).length == 0) revert TitleOrUriEmpty();
-        if (bytes(p.manifest).length == 0) revert EmptyManifest();
-        if (bytes(p.manifest).length > MAX_MANIFEST_BYTES) revert ManifestTooLong();
+        songId = _createSong(p, sha256(bytes(p.manifest)));
+    }
 
-        uint128 actualPrice = p.price == 0 ? defaultSongPrice : p.price;
-        if (actualPrice < MIN_SONG_PRICE) revert PriceBelowMinimum();
-
-        songId = nextSongId++;
-        songs[songId] = Song({
-            artist: p.artist,
-            exists: true,
-            splitsLocked: false,
-            price: actualPrice,
-            maxSupply: p.maxSupply,
-            currentSupply: 0
-        });
-        tokenUris[songId] = p.tokenUri;
-        artistSongs[p.artist].push(songId);
-
-        bytes32 manifestHash = sha256(bytes(p.manifest)); // precompile 0x02, derive on-chain
-        releaseManifest[songId] = manifestHash;
-
-        _setTokenRoyalty(songId, p.artist, p.royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : p.royaltyBps);
-
-        if (p.splits.length > 0) {
-            _setSplits(songId, p.splits);
+    /// @notice Artist-attested gasless creation: the artist signs the full params off-chain
+    ///         (EIP-712, EIP-1271-compatible) and the operator submits. The recovered signer
+    ///         must equal `p.artist`, so the operator can neither mislabel the artist nor tamper
+    ///         with any field, and mempool observers cannot squat the manifest.
+    /// @param nonce Per-artist sequential nonce (see `createSongNonces`).
+    /// @param deadline Signature expiry (unix seconds).
+    function createSongWithArtistSignature(
+        CreateSongParams calldata p,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata artistSignature
+    ) external onlyOwner whenNotPaused returns (uint256 songId) {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (nonce != createSongNonces[p.artist]) {
+            revert NonceMismatch(createSongNonces[p.artist], nonce);
         }
-        // Lock applies even with no splits — lets an artist freeze a "100% to me" config immutably.
-        if (p.lockSplitsNow) {
-            songs[songId].splitsLocked = true;
-            emit SplitsLocked(songId);
-        }
-
-        emit SongCreated(
-            songId, p.artist, manifestHash, actualPrice, p.maxSupply, p.tokenUri, p.manifest
-        );
-        emit URI(p.tokenUri, songId);
+        bytes32 manifestHash = sha256(bytes(p.manifest));
+        if (
+            !SignatureChecker.isValidSignatureNowCalldata(
+                p.artist, _createSongDigest(p, manifestHash, nonce, deadline), artistSignature
+            )
+        ) revert InvalidCreateSignature();
+        createSongNonces[p.artist] = nonce + 1;
+        songId = _createSong(p, manifestHash);
     }
 
     function configureSplits(uint256 songId, SplitRecipient[] calldata splits)
@@ -516,6 +520,73 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     }
 
     // ============ Internal ============
+
+    function _createSong(CreateSongParams calldata p, bytes32 manifestHash)
+        internal
+        returns (uint256 songId)
+    {
+        if (p.artist == address(0)) revert ZeroAddress();
+        if (bytes(p.tokenUri).length == 0) revert TitleOrUriEmpty();
+        if (bytes(p.manifest).length == 0) revert EmptyManifest();
+        if (bytes(p.manifest).length > MAX_MANIFEST_BYTES) revert ManifestTooLong();
+
+        uint128 actualPrice = p.price == 0 ? defaultSongPrice : p.price;
+        if (actualPrice < MIN_SONG_PRICE) revert PriceBelowMinimum();
+
+        songId = nextSongId++;
+        songs[songId] = Song({
+            artist: p.artist,
+            exists: true,
+            splitsLocked: false,
+            price: actualPrice,
+            maxSupply: p.maxSupply,
+            currentSupply: 0
+        });
+        tokenUris[songId] = p.tokenUri;
+        artistSongs[p.artist].push(songId);
+        releaseManifest[songId] = manifestHash;
+
+        _setTokenRoyalty(songId, p.artist, p.royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : p.royaltyBps);
+
+        if (p.splits.length > 0) {
+            _setSplits(songId, p.splits);
+        }
+        // Lock applies even with no splits — lets an artist freeze a "100% to me" config immutably.
+        if (p.lockSplitsNow) {
+            songs[songId].splitsLocked = true;
+            emit SplitsLocked(songId);
+        }
+
+        emit SongCreated(
+            songId, p.artist, manifestHash, actualPrice, p.maxSupply, p.tokenUri, p.manifest
+        );
+        emit URI(p.tokenUri, songId);
+    }
+
+    function _createSongDigest(
+        CreateSongParams calldata p,
+        bytes32 manifestHash,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    _CREATE_SONG_TYPEHASH,
+                    p.artist,
+                    p.price,
+                    p.maxSupply,
+                    p.royaltyBps,
+                    p.lockSplitsNow,
+                    keccak256(bytes(p.tokenUri)),
+                    manifestHash,
+                    keccak256(abi.encode(p.splits)),
+                    nonce,
+                    deadline
+                )
+            )
+        );
+    }
 
     function _setSplits(uint256 songId, SplitRecipient[] calldata splits) internal {
         splits.validateSplits();
