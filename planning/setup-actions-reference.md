@@ -1,3 +1,6 @@
+> **SUPERSEDED (historical).** In Process / Zora factory `setupActions` mechanics — not used by
+> the custom USDC build (which owns its own ERC-1155). See `planning/tortoise-usdc-build.md`.
+
 # Setup Actions Reference
 
 This document tracks the confirmed In Process / Zora-derived ERC-1155 factory contracts, explicitly marked testnet candidates, interface stubs, and `setupActions` calldata templates that `TortoiseInProcessMinter` and the deployment scripts depend on. It is the single source of truth for "how Tortoise creates collections and tokens, and how the new minter is granted permission to mint them."

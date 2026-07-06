@@ -1,3 +1,7 @@
+> **SUPERSEDED (historical).** Targets the In Process (Zora-1155) integration paid in ETH. The
+> project pivoted to a **custom** Tortoise 1155 paid in **USDC** — see
+> `planning/tortoise-usdc-build.md` for the as-built system. Kept for history.
+
 # Tortoise ETH Minter — Implementation Plan
 
 **Status:** in-repo source of truth on `main`. Consolidated 2026-06-04 from the

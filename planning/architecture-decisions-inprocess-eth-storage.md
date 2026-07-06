@@ -1,3 +1,9 @@
+> **PARTIALLY SUPERSEDED.** The In Process integration and ETH currency decisions here were
+> walked back: the build went **custom Tortoise 1155 + USDC** (see
+> `planning/tortoise-usdc-build.md`). The **storage / verifiability thesis** (on-chain
+> `sha256(manifest)` commitment, R2/Opus serving, no permanence promise) still holds and is
+> realized in that build.
+
 # Architecture Decisions — In Process, ETH, and Verifiable Storage
 
 **Status:** decided (strategy session, 2026-07-05). This is a decision record, not
