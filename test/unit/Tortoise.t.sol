@@ -154,6 +154,7 @@ contract TortoiseTest is Test {
         assertEq(tortoise.uri(id), URI);
         assertEq(tortoise.getArtistSongs(artist).length, 1);
         assertEq(tortoise.nextSongId(), id + 1);
+        assertFalse(tortoise.artistAttested(id));
     }
 
     function test_createSong_defaultRoyaltyToArtist() public {
@@ -207,6 +208,7 @@ contract TortoiseTest is Test {
         uint256 id = tortoise.createSongWithArtistSignature(p, 0, deadline, sig);
         assertEq(tortoise.getSong(id).artist, artist);
         assertEq(tortoise.createSongNonces(artist), 1);
+        assertTrue(tortoise.artistAttested(id));
     }
 
     function test_createSongSigned_wrongSignerReverts() public {
@@ -557,6 +559,24 @@ contract TortoiseTest is Test {
         vm.prank(collector);
         vm.expectRevert(err);
         tortoise.batchCollect(items, cost - 1);
+    }
+
+    function test_batchCollect_duplicateSongCannotBypassMaxSupply() public {
+        Tortoise.CreateSongParams memory p = _params(artist);
+        p.maxSupply = 2;
+        uint256 id = tortoise.createSong(p);
+
+        Tortoise.BatchItem[] memory items = new Tortoise.BatchItem[](2);
+        items[0].songId = id;
+        items[0].quantity = 2;
+        items[0].mintTo = collector;
+        items[1].songId = id;
+        items[1].quantity = 1;
+        items[1].mintTo = collector;
+
+        vm.expectRevert(Tortoise.ExceedsMaxSupply.selector);
+        tortoise.batchCollect(items, uint256(PRICE) * 3);
+        assertEq(tortoise.getSong(id).currentSupply, 0);
     }
 
     function test_batchCollectAuth_happy() public {

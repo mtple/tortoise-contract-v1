@@ -37,7 +37,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     // Floor below which a deposit pools into _queuedReward instead of extending the
     // period. Raises the cost of cap-and-extend griefing on rewardRate. Scaled (18-dec).
     uint256 public constant MIN_REWARD_DEPOSIT = 1e6 * 1e12; // 1 USDC
-    uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
+    uint256 public totalRewardsDeposited; // USDC still owed (native 6-decimal; decreases on claim)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     uint256 internal _queuedRewardUpdatedAt; // Timestamp of last _queuedReward mutation; gates sub-floor flush
     mapping(address => uint256) public userRewardPerTokenPaid;
@@ -158,13 +158,10 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued USDC rewards. Release the accrual slot
-        // (reservedBalance) so the forfeited USDC is recycled into future
-        // rewards via the next depositRewards (balanceOf - totalRewardsDeposited
-        // picks it up as excess). totalRewardsDeposited is intentionally NOT
-        // decremented: no USDC leaves the contract here, so the liability
-        // remains owed to the reward pool as a whole. Decrementing it would
-        // double-count the recycled USDC on the next deposit.
+        // Forfeit all accrued USDC rewards. Move the scaled liability out of this
+        // user's reserved accrual, then reschedule it for the remaining stakers
+        // (or queue it below after this user has been removed). No USDC leaves the
+        // contract, so totalRewardsDeposited remains unchanged.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
@@ -173,6 +170,10 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
         stakedBalance[msg.sender] = 0;
         totalStaked -= amount;
+
+        if (forfeited > 0) {
+            _addScaledReward(forfeited);
+        }
 
         // If all stakers have exited mid-period, queue remaining rewards
         // so they aren't lost emitting into a zero-totalStaked void.
@@ -383,8 +384,10 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     }
 
     function _addReward(uint256 reward) internal {
-        reward *= REWARD_SCALAR;
+        _addScaledReward(reward * REWARD_SCALAR);
+    }
 
+    function _addScaledReward(uint256 reward) internal {
         // Queue rewards when no one is staked — rewardPerToken won't accumulate
         // with totalStaked == 0, so these rewards would be permanently lost.
         if (totalStaked == 0) {

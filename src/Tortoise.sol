@@ -22,9 +22,10 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 ///         a percentage fee waterfall (platform/staking/artist) with non-blocking shell
 ///         crediting and pull-payment deferral for blocklisted recipients. Immutable
 ///         (no proxy). See `planning/architecture-decisions-inprocess-eth-storage.md`.
-/// @dev The manifest hash is the one load-bearing verifiability guarantee: a collector can
-///      prove they hold the real release by recomputing `sha256` of the master against the
-///      `audioSha256` inside the committed manifest — without trusting Tortoise.
+/// @dev The manifest hash is the load-bearing content-integrity guarantee: a collector can
+///      prove the release metadata has not changed by recomputing `sha256` of the canonical
+///      manifest. `artistAttested(songId)` separately identifies whether the named artist
+///      signed the creation payload; operator-created songs do not imply artist attestation.
 contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, Pausable, EIP712 {
     using SafeERC20 for IERC20;
     using SplitLib for SplitRecipient[];
@@ -110,6 +111,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
     mapping(uint256 => string) internal tokenUris;
     mapping(address => uint256[]) public artistSongs;
     mapping(address => uint256) public createSongNonces; // per-artist nonce for signed creation
+    mapping(uint256 => bool) public artistAttested;
 
     // Pull-payment (blocklisted recipients): USDC held for later claim.
     mapping(uint256 => mapping(address => uint256)) public pendingClaims;
@@ -131,6 +133,12 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         uint128 maxSupply,
         string tokenUri,
         string manifest
+    );
+    event SongCreationAuthority(
+        uint256 indexed songId,
+        address indexed artist,
+        address indexed operator,
+        bool artistAttested
     );
     event SongCollected(
         uint256 indexed songId,
@@ -322,7 +330,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         whenNotPaused
         returns (uint256 songId)
     {
-        songId = _createSong(p, sha256(bytes(p.manifest)));
+        songId = _createSong(p, sha256(bytes(p.manifest)), false);
     }
 
     /// @notice Artist-attested gasless creation: the artist signs the full params off-chain
@@ -346,7 +354,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
                 p.artist, _createSongDigest(p, manifestHash, nonce, deadline), artistSignature
             )) revert InvalidCreateSignature();
         createSongNonces[p.artist] = nonce + 1;
-        songId = _createSong(p, manifestHash);
+        songId = _createSong(p, manifestHash, true);
     }
 
     function configureSplits(uint256 songId, SplitRecipient[] calldata splits)
@@ -591,7 +599,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
 
     // ============ Internal ============
 
-    function _createSong(CreateSongParams calldata p, bytes32 manifestHash)
+    function _createSong(CreateSongParams calldata p, bytes32 manifestHash, bool isArtistAttested)
         internal
         returns (uint256 songId)
     {
@@ -615,6 +623,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         tokenUris[songId] = p.tokenUri;
         artistSongs[p.artist].push(songId);
         releaseManifest[songId] = manifestHash;
+        artistAttested[songId] = isArtistAttested;
 
         _setTokenRoyalty(songId, p.artist, p.royaltyBps == 0 ? DEFAULT_ROYALTY_BPS : p.royaltyBps);
 
@@ -630,6 +639,7 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         emit SongCreated(
             songId, p.artist, manifestHash, actualPrice, p.maxSupply, p.tokenUri, p.manifest
         );
+        emit SongCreationAuthority(songId, p.artist, msg.sender, isArtistAttested);
         emit URI(p.tokenUri, songId);
     }
 
@@ -700,6 +710,26 @@ contract Tortoise is ERC1155, ERC2981, Ownable2Step, ReentrancyGuardTransient, P
         for (uint256 i; i < n;) {
             BatchItem calldata it = items[i];
             uint256 c = _validateAndQuote(it.songId, it.quantity, it.comment);
+
+            // `_validateAndQuote` checks one item against the pre-batch supply. Sum earlier
+            // entries for the same song so duplicate items cannot collectively exceed its cap.
+            uint256 cumulativeQuantity = it.quantity;
+            for (uint256 j; j < i;) {
+                if (items[j].songId == it.songId) {
+                    cumulativeQuantity += items[j].quantity;
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            Song storage s = songs[it.songId];
+            if (
+                s.maxSupply != 0
+                    && uint256(s.currentSupply) + cumulativeQuantity > uint256(s.maxSupply)
+            ) {
+                revert ExceedsMaxSupply();
+            }
+
             costs[i] = c;
             aggregate += c;
             unchecked {

@@ -1,4 +1,5 @@
 {
-  "_comment": "Base Sepolia (chainId 84532) ETH-stack address registry. inProcessFactory is INTENTIONALLY ABSENT: the In Process Sepolia factory is unconfirmed, so the creation scripts FAIL CLOSED (Config.inProcessFactory reverts) until it is pinned here or passed via INPROCESS_FACTORY. Do NOT use the canonical Zora factory unless Tortoise deliberately chooses a non-In-Process testnet stack. See planning/setup-actions-reference.md C.1 and the plan's Base Sepolia deployment section.",
+  "_comment": "Base Sepolia (chainId 84532) custom Tortoise ERC-1155 + USDC stack. Add tortoise and tortoiseShell only after a verified deployment.",
+  "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "stakingToken": "0x1c3879b9dabA1B51253b109726C44bb391cae8c5"
 }

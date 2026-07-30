@@ -1,160 +1,151 @@
-# Tortoise
+# Tortoise contracts
 
-Solidity contracts for the Tortoise music platform on Base.
+Smart contracts for the Tortoise music platform on Base.
 
-> **Status: migrating to a native-ETH stack.** The active codebase in `src/` is the v2
-> system — `TortoiseInProcessMinter` (mints In Process / Zora-compatible ERC-1155s via
-> `adminMint`, paying in **native ETH**) plus an ETH-native `TortoiseShell`, with a
-> 5/10/85 platform/staking/artist split. See
-> [`planning/eth-minter-implementation-plan.md`](planning/eth-minter-implementation-plan.md).
->
-> The original USDC v1 (`TortoiseV1` + USDC `TortoiseShell`, tag `v1.0.0-rc1`, audits
-> 6→12) is **archived, frozen, and audited** under [`legacy/v1/`](legacy/README.md). It
-> is not migrated to v2 and shares no state.
+> **Status:** v2 is the active custom ERC-1155 + USDC implementation. It is suitable for
+> testnet integration but remains pre-audit and has no verified v2 deployment recorded.
+> The audited v1 release candidate is frozen under `legacy/v1/`.
+
+## Active contracts
+
+### `Tortoise`
+
+An immutable custom ERC-1155 that is the token, minter, payment router and provenance registry.
+
+- Creates songs atomically with price, supply, URI, splits, royalties and
+  `sha256(canonical manifest)`.
+- Accepts USDC through `approve`/`transferFrom` or Circle EIP-3009
+  `receiveWithAuthorization`.
+- Distributes an inclusive 5% platform / 10% staking / 85% artist waterfall.
+- Supports all-or-nothing batches of up to 20 items, including repeated songs with cumulative
+  supply-cap enforcement.
+- Defers USDC transfers rejected by a blocklisted recipient, with permissionless claims and a
+  90-day owner reroute.
+- Implements ERC-2981 royalties, artist-managed splits, pausing and two-step ownership.
+
+Song creation has two explicitly distinguishable authority modes:
+
+- `createSong`: the owner/operator asserts the artist. `artistAttested(songId)` is `false`.
+- `createSongWithArtistSignature`: the artist signs every creation field through EIP-712 or
+  EIP-1271. `artistAttested(songId)` is `true`.
+
+The manifest commitment proves content integrity. Artist identity should only be presented as
+cryptographically attested when `artistAttested(songId)` is true.
+
+### `TortoiseShell`
+
+TORT staking with USDC rewards:
+
+- Seven-day Synthetix-style reward drip.
+- Balance-reconciled reward deposits.
+- Fixed TORT credit per collected copy from a prefunded pool.
+- Reward queuing while no one is staked and a minimum-deposit dilution guard.
+- Emergency withdrawal immediately recycles forfeited rewards to remaining stakers, or queues
+  them for the next staker when the pool becomes empty.
 
 ## Repository layout
 
-```
-src/                  v2 (active): native-ETH In Process minter + ETH TortoiseShell
-test/                 v2 tests (unit / fuzz / invariant / fork)
-script/               v2 deploy + setup-action scripts
-planning/             design & implementation docs
-legacy/v1/            archived v1 (USDC) — build/test with `FOUNDRY_PROFILE=v1`
-```
-
-The sections below document the archived **v1** contracts.
-
-## Contracts (v1, archived under `legacy/v1/`)
-
-### TortoiseV1 (`legacy/v1/src/TortoiseV1.sol`)
-
-ERC-1155 music NFT collection contract.
-
-- Artists create songs with configurable per-song pricing
-- Collectors mint with USDC ($1.00 per copy by default: $0.85 artist + $0.05 platform + $0.10 staking)
-- Revenue splits: up to 10 recipients per song, basis points, permanently lockable
-- Platform fees accumulate in the contract, withdrawn by the owner via `withdrawPlatformFees()`
-- Staking fees forwarded to TortoiseShell for 7-day USDC drip to stakers
-- TORT crediting via TortoiseShell on every mint (try/catch so shell issues never block mints)
-- Shell integration can be disabled by setting `tortoiseShell` to `address(0)` (auto-zeros staking fee)
-
-### TortoiseShell (`legacy/v1/src/TortoiseShell.sol`)
-
-Staking contract with USDC rewards and automatic TORT crediting.
-
-- Stake $TORT tokens, earn USDC rewards from collection fees
-- Synthetix-style 7-day drip: each deposit combines with remaining rewards and resets the window
-- Balance-based reward accounting: `depositRewards` reads actual USDC balance rather than trusting caller-provided amounts
-- TORT crediting: fixed TORT per copy collected, moved from pre-funded pool into collector's staked balance
-- Graceful degradation: `creditStake` never reverts (caps to available pool, no-ops if empty)
-- Emergency withdraw: get TORT back, forfeit unclaimed USDC
-- Pause-safe: `withdraw`, `emergencyWithdraw`, `depositRewards`, and `creditStake` work when paused
-
-### SplitLib (`legacy/v1/src/libraries/SplitLib.sol`)
-
-Library for revenue split validation and calculation. Enforces basis points summing to 10,000, max 10 recipients, min 1% per recipient, no duplicates, no zero addresses.
-
-## Architecture
-
-```
-Buyer calls TortoiseV1.mintSong(songId, quantity, recipient)
-  |
-  +-- USDC pulled from buyer
-  |
-  +-- 1. Platform fee ($0.05)  --> held in TortoiseV1 contract
-  +-- 2. Staking fee ($0.10)   --> TortoiseShell.depositRewards()
-  |                                 (dripped to all stakers over 7 days)
-  +-- 3. Artist revenue ($0.85 x qty) --> split recipients or artist
-  |
-  +-- 4. TortoiseShell.creditStake(recipient, quantity)
-  |       --> TORT from pool into recipient's staked balance
-  |       --> wrapped in try/catch (mint succeeds even if shell fails)
-  |
-  +-- ERC-1155 mint
+```text
+src/                  active v2 contracts
+test/unit/            unit and fuzz tests for Tortoise and TortoiseShell
+test/invariant/       stateful Tortoise invariants
+test/fork/            live Base USDC integration tests
+script/               deployment script
+addresses/            per-chain token and verified-deployment registry
+planning/             architecture and as-built references
+legacy/v1/            frozen audited v1 contracts and tests
 ```
 
-Three layers of protection ensure mints never fail due to shell issues:
-1. **Shell graceful degradation** -- `creditStake` caps to available pool, never reverts
-2. **TortoiseV1 try/catch** -- external shell calls wrapped, mint succeeds on failure
-3. **Kill switch** -- owner sets `tortoiseShell` to `address(0)`, disabling all shell integration
-
-## Setup
+## Build and test
 
 ```bash
-git clone <repo>
-cd tortoise-contract-v1
-forge install
+forge build --sizes
+forge test --no-match-contract Fork
+forge fmt --check
 ```
 
-## Build
+The CI profile runs 10,000 fuzz cases and 512 invariant runs:
 
 ```bash
-forge build
+FOUNDRY_PROFILE=ci forge test --no-match-contract Fork
 ```
 
-## Test
+Run the real-USDC Base fork tests separately:
 
 ```bash
-# All tests (excluding fork tests)
-forge test
-
-# Fork tests (requires Base RPC)
-forge test --match-contract TortoiseV1ForkTest --fork-url $BASE_RPC_URL
-
-# With gas report
-forge test --gas-report
-
-# CI profile (10,000 fuzz runs, 512 invariant runs)
-FOUNDRY_PROFILE=ci forge test
+BASE_RPC_URL=https://mainnet.base.org \
+  forge test --match-contract TortoiseBaseForkTest -vvv
 ```
 
-### Test Suite
+The fork suite exercises:
 
-| Suite | Tests | Description |
-|-------|-------|-------------|
-| TortoiseV1Test | 59 | Unit tests: song creation, splits, minting, payments, admin |
-| TortoiseShellTest | 53 | Unit tests: staking, rewards, crediting, access control, pause |
-| MintToShellTest | 5 | Integration: full mint-to-shell flow with both contracts |
-| TortoiseV1FuzzTest | 7 | Fuzz: random prices/quantities/splits, payment sums, supply tracking |
-| TortoiseShellFuzzTest | 8 | Fuzz: stake/withdraw/credit sequences, reward proportionality |
-| TortoiseV1InvariantTest | 4 | Invariant: fee bounds, platform fee accounting, song ID monotonicity |
-| TortoiseShellInvariantTest | 4 | Invariant: totalStaked consistency, TORT pool accounting, USDC solvency |
-| TortoiseV1ForkTest | 6 | Fork: real Base USDC/TORT, full lifecycle, splits, reward claims |
+- Circle USDC EIP-3009 signatures against the deployed Base proxy.
+- Full collect → fee distribution → shell credit → reward claim flow.
+- Circle blocklisting, deferred artist payment and later claim.
 
-## Deployment (v1, archived)
+Run the frozen v1 suite with its separate profile:
 
 ```bash
-cp .env.example .env
-# Fill in .env values
-FOUNDRY_PROFILE=v1 forge script legacy/v1/script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
+FOUNDRY_PROFILE=v1 forge test --no-match-contract Fork
 ```
 
-Deployment order:
-1. Deploy TortoiseShell (TORT address, USDC address, 604800 reward duration)
-2. Deploy TortoiseV1 (USDC address, fees, shell address)
-3. Register TortoiseV1 as authorized caller on TortoiseShell
-4. Fund TortoiseShell TORT pool via `fundTortPool()`
-5. Set `tortRewardPerCollection` on TortoiseShell (777,777 TORT per copy)
+## Deployment
 
-## Configuration
+Copy `.env.example`, set `DEPLOYER_PRIVATE_KEY`, and optionally override the registry token
+addresses with `USDC` or `TORT`.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Song price | $0.85 (850,000) | Artist revenue per copy, configurable per song |
-| Platform fee | $0.05 (50,000) | Flat per transaction, held in contract |
-| Staking fee | $0.10 (100,000) | Flat per transaction, dripped to stakers |
-| TORT per collection | 777,777 TORT | Fixed per copy, from pre-funded pool |
-| Reward duration | 7 days (604,800s) | USDC drip window, resets on each deposit |
+Dry-run Base Sepolia first:
 
-All values in USDC units (6 decimals). TORT values in wei (18 decimals).
+```bash
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --sender "$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY")"
+```
 
-## Token Addresses (Base)
+Broadcast and verify only after reviewing the simulation:
+
+```bash
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --private-key "$DEPLOYER_PRIVATE_KEY" \
+  --broadcast \
+  --verify
+```
+
+The script:
+
+1. Resolves USDC and TORT from environment overrides or `addresses/<chainId>.json`.
+2. Deploys `TortoiseShell`.
+3. Deploys `Tortoise`.
+4. Authorizes `Tortoise` in the shell.
+5. Optionally sets `TORT_REWARD_PER_COLLECTION`.
+
+After confirmation:
+
+1. Verify both contracts and ownership.
+2. Confirm `shell.authorizedCallers(tortoise)`.
+3. Fund the TORT pool.
+4. Record the verified `tortoiseShell` and `tortoise` addresses in the chain registry.
+5. Run a real end-to-end collect and reward claim.
+
+## Canonical token configuration
 
 | Token | Network | Address |
-|-------|---------|---------|
-| USDC | Base Mainnet | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| --- | --- | --- |
+| USDC | Base | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | USDC | Base Sepolia | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| $TORT | Base Mainnet | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` |
+| TORT | Base | `0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6` |
+| TORS test token | Base Sepolia | `0x1c3879b9dabA1B51253b109726C44bb391cae8c5` |
+
+## Production gate
+
+Before a mainnet deployment:
+
+- Complete an independent audit of `Tortoise` and the active `TortoiseShell`.
+- Resolve all high/medium findings and rerun the full unit, fuzz, invariant and fork suites.
+- Recheck runtime size against EIP-170 after audit changes.
+- Verify client/indexer handling of `artistAttested`.
+- Perform and document a Base Sepolia deployment rehearsal.
 
 ## License
 

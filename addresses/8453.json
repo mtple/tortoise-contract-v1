@@ -1,5 +1,5 @@
 {
-  "_comment": "Base mainnet (chainId 8453) ETH-stack address registry. inProcessFactory is fork-verified (plan C.8). Fill tortoiseShellEth / tortoiseInProcessMinter after deploying, and platformFeeRecipient before running creation scripts (or pass via env).",
-  "inProcessFactory": "0x540C18B7f99b3b599c6FeB99964498931c211858",
+  "_comment": "Base mainnet (chainId 8453) custom Tortoise ERC-1155 + USDC stack. Add tortoise and tortoiseShell only after a verified deployment.",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "stakingToken": "0x601410d1d3093cF469fCA4e1EfB2Fb67B4E225c6"
 }
