@@ -1,0 +1,5 @@
+{
+  "_comment": "Base Sepolia (chainId 84532) custom Tortoise ERC-1155 + USDC stack. Add tortoise and tortoiseShell only after a verified deployment.",
+  "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "stakingToken": "0x1c3879b9dabA1B51253b109726C44bb391cae8c5"
+}

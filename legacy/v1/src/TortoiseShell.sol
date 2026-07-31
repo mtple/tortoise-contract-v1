@@ -37,7 +37,7 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     // Floor below which a deposit pools into _queuedReward instead of extending the
     // period. Raises the cost of cap-and-extend griefing on rewardRate. Scaled (18-dec).
     uint256 public constant MIN_REWARD_DEPOSIT = 1e6 * 1e12; // 1 USDC
-    uint256 public totalRewardsDeposited; // USDC still owed (native 6-decimal; decreases on claim)
+    uint256 public totalRewardsDeposited; // USDC accounted as still owed (native 6-decimal; decreases on claim/forfeit)
     uint256 internal _queuedReward; // Scaled rewards queued while totalStaked == 0
     uint256 internal _queuedRewardUpdatedAt; // Timestamp of last _queuedReward mutation; gates sub-floor flush
     mapping(address => uint256) public userRewardPerTokenPaid;
@@ -109,9 +109,11 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     /// transfer hooks. Accounting (`tortPool`, `stakedBalance`, `reservedBalance`,
     /// `totalRewardsDeposited`) assumes `amount` transferred equals `amount` received.
     /// Behavior is undefined under non-standard tokens.
-    constructor(address _stakingToken, address _rewardToken, uint256 _rewardDuration)
-        Ownable(msg.sender)
-    {
+    constructor(
+        address _stakingToken,
+        address _rewardToken,
+        uint256 _rewardDuration
+    ) Ownable(msg.sender) {
         if (_stakingToken == address(0)) revert ZeroAddress();
         if (_rewardToken == address(0)) revert ZeroAddress();
         if (_stakingToken == _rewardToken) revert TokensMustDiffer();
@@ -158,10 +160,13 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         uint256 amount = stakedBalance[msg.sender];
         if (amount == 0) revert ZeroAmount();
 
-        // Forfeit all accrued USDC rewards. Move the scaled liability out of this
-        // user's reserved accrual, then reschedule it for the remaining stakers
-        // (or queue it below after this user has been removed). No USDC leaves the
-        // contract, so totalRewardsDeposited remains unchanged.
+        // Forfeit all accrued USDC rewards. Release the accrual slot
+        // (reservedBalance) so the forfeited USDC is recycled into future
+        // rewards via the next depositRewards (balanceOf - totalRewardsDeposited
+        // picks it up as excess). totalRewardsDeposited is intentionally NOT
+        // decremented: no USDC leaves the contract here, so the liability
+        // remains owed to the reward pool as a whole. Decrementing it would
+        // double-count the recycled USDC on the next deposit.
         uint256 forfeited = userUnpaidRewards[msg.sender];
         if (forfeited > 0) {
             reservedBalance -= forfeited;
@@ -170,10 +175,6 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
 
         stakedBalance[msg.sender] = 0;
         totalStaked -= amount;
-
-        if (forfeited > 0) {
-            _addScaledReward(forfeited);
-        }
 
         // If all stakers have exited mid-period, queue remaining rewards
         // so they aren't lost emitting into a zero-totalStaked void.
@@ -200,20 +201,17 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         // precision drift from non-REWARD_SCALAR-aligned claim subtractions.
         // `actual` may exceed `amount` when forfeited rewards are being recycled.
         uint256 currentBalance = rewardToken.balanceOf(address(this));
-        uint256 actual =
-            currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
+        uint256 actual = currentBalance > totalRewardsDeposited ? currentBalance - totalRewardsDeposited : 0;
         if (actual == 0) return;
         totalRewardsDeposited += actual;
         _addReward(actual);
         emit RewardsDeposited(amount, actual, rewardRate);
     }
 
-    function creditStake(address user, uint256 quantity)
-        external
-        onlyAuthorizedCaller
-        updateReward(user)
-        returns (uint256 credited)
-    {
+    function creditStake(
+        address user,
+        uint256 quantity
+    ) external onlyAuthorizedCaller updateReward(user) returns (uint256 credited) {
         if (user == address(0)) revert ZeroAddress();
         uint256 creditAmount = quantity * tortRewardPerCollection;
 
@@ -259,11 +257,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         return stakedBalance[user];
     }
 
-    function getUserStats(address user)
-        external
-        view
-        returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool)
-    {
+    function getUserStats(
+        address user
+    ) external view returns (uint256 stakedAmount, uint256 pendingUsdcRewards, uint256 shareOfPool) {
         stakedAmount = stakedBalance[user];
         pendingUsdcRewards = earned(user) / REWARD_SCALAR;
         shareOfPool = totalStaked == 0 ? 0 : (stakedAmount * 1e18) / totalStaked;
@@ -384,10 +380,8 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
     }
 
     function _addReward(uint256 reward) internal {
-        _addScaledReward(reward * REWARD_SCALAR);
-    }
+        reward *= REWARD_SCALAR;
 
-    function _addScaledReward(uint256 reward) internal {
         // Queue rewards when no one is staked — rewardPerToken won't accumulate
         // with totalStaked == 0, so these rewards would be permanently lost.
         if (totalStaked == 0) {
@@ -411,9 +405,6 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         if (block.timestamp >= periodFinish) {
             rewardRate = pooled / rewardDuration;
         } else {
-            // TODO(SEC-DC-001): Before mainnet, explicitly accept or change the rolling-emissions
-            // policy documented in planning/security-design-considerations.md. A public
-            // collection can fund this path and restart the full duration for the unpaid balance.
             uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
             rewardRate = (pooled + leftover) / rewardDuration;

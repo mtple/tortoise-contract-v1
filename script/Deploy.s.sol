@@ -1,42 +1,52 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.34;
 
-import {Script, console} from "forge-std/Script.sol";
-import {TortoiseV1} from "../src/TortoiseV1.sol";
+import {Script, console2} from "forge-std/Script.sol";
+import {Tortoise} from "../src/Tortoise.sol";
 import {TortoiseShell} from "../src/TortoiseShell.sol";
-import {Config} from "./helpers/Config.s.sol";
 
-contract DeployTortoise is Config {
-    function run() public {
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint64 platformFee = uint64(vm.envUint("INITIAL_PLATFORM_FEE"));
-        uint128 defaultPrice = uint128(vm.envUint("INITIAL_SONG_PRICE"));
-        uint64 stakingFee = uint64(vm.envUint("INITIAL_STAKING_FEE"));
+/// @notice Deploys the USDC Tortoise stack (staking shell + Tortoise music NFT) and wires the
+///         NFT as an authorized shell caller. The operator (broadcaster) is owner of both.
+/// @dev Token addresses resolve as env override (`USDC`, `TORT`) then
+///      `addresses/<chainId>.json` (`.usdc`, `.stakingToken`).
+/// Env:
+///   USDC                        optional payment/reward-token override
+///   TORT                        optional staking-token override
+///   REWARD_DURATION             shell drip window, seconds (default 7 days)
+///   TORT_REWARD_PER_COLLECTION  TORT credited per copy collected (default 0; set later)
+/// After deploy, fund the shell's TORT pool (`fundTortPool`) and, if not set here,
+/// `setTortRewardPerCollection` before staking rewards flow.
+contract Deploy is Script {
+    function run() external returns (Tortoise tortoise, TortoiseShell shell) {
+        address usdc = _configuredAddress("USDC", ".usdc");
+        address tort = _configuredAddress("TORT", ".stakingToken");
+        uint256 rewardDuration = vm.envOr("REWARD_DURATION", uint256(7 days));
+        uint256 tortReward = vm.envOr("TORT_REWARD_PER_COLLECTION", uint256(0));
 
-        address usdcAddress = getUsdcAddress();
-        address tortAddress = getTortAddress();
-
-        vm.startBroadcast(deployerPrivateKey);
-
-        // 1. Deploy TortoiseShell
-        TortoiseShell shell = new TortoiseShell(tortAddress, usdcAddress, 604_800);
-        console.log("TortoiseShell deployed at:", address(shell));
-
-        // 2. Deploy TortoiseV1
-        TortoiseV1 tortoise = new TortoiseV1(
-            usdcAddress, platformFee, defaultPrice, address(shell), stakingFee
-        );
-        console.log("TortoiseV1 deployed at:", address(tortoise));
-
-        // 3. Register TortoiseV1 as authorized caller
+        vm.startBroadcast();
+        shell = new TortoiseShell(tort, usdc, rewardDuration);
+        tortoise = new Tortoise(usdc, address(shell));
         shell.addAuthorizedCaller(address(tortoise));
-        console.log("TortoiseV1 registered as authorized caller on TortoiseShell");
-
+        if (tortReward > 0) {
+            shell.setTortRewardPerCollection(tortReward);
+        }
         vm.stopBroadcast();
 
-        // Remaining manual steps:
-        // 4. Fund TortoiseShell TORT pool via fundTortPool()
-        // 5. Set tortRewardPerCollection on TortoiseShell
-        // 6. Set stakingFee on TortoiseV1 (if not set at deploy)
+        console2.log("TortoiseShell deployed:", address(shell));
+        console2.log("Tortoise deployed:", address(tortoise));
+    }
+
+    function _configuredAddress(string memory envKey, string memory jsonKey)
+        internal
+        view
+        returns (address configured)
+    {
+        configured = vm.envOr(envKey, address(0));
+        if (configured != address(0)) return configured;
+
+        string memory registryPath =
+            string.concat(vm.projectRoot(), "/addresses/", vm.toString(block.chainid), ".json");
+        configured = vm.parseJsonAddress(vm.readFile(registryPath), jsonKey);
+        require(configured != address(0), "Deploy: zero configured address");
     }
 }

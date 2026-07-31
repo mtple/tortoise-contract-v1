@@ -33,11 +33,10 @@ library SplitLib {
         if (totalPercentage != BASIS_POINTS) revert InvalidSplitTotal();
     }
 
-    function calculateSplitAmount(uint256 totalAmount, uint96 percentage)
-        internal
-        pure
-        returns (uint256)
-    {
+    function calculateSplitAmount(
+        uint256 totalAmount,
+        uint96 percentage
+    ) internal pure returns (uint256) {
         return (totalAmount * percentage) / BASIS_POINTS;
     }
 }

@@ -247,25 +247,24 @@ shell crediting, ETH `pendingClaims`/`_safeSendETH` deferral.
 
 ## 9. How to resume this work (start here next time)
 
-- **Chosen base branch to build on:** `codex/minter-architecture-plan` (Track A, ETH).
-  Read its two design docs first:
-  `planning/minter-architecture-migration-plan.md` (808 lines, the D.1–D.12 decisions,
-  collect flow, EIP-712 schemas, ETH Shell rewrite) and
-  `planning/setup-actions-reference.md` (factory/permission/setup-action specifics).
+- **Start here:** the consolidated, in-repo implementation plan now lives on `main` at
+  `planning/eth-minter-implementation-plan.md` (the full D.1–D.12 decisions, collect
+  flow, EIP-712 schemas, ETH Shell rewrite, Phases 1–5, plus the Track-B harvest section
+  H.1–H.5) with `planning/setup-actions-reference.md` (factory/permission/setup-action
+  specifics). These superseded the month-old `codex/minter-architecture-plan` docs; the
+  stale USDC router prototype was left behind on that branch.
 - **Decisions already locked** (see §8): native ETH + 5/10/85; immutable (no proxy);
   **no premint**; `collect()` is the only paid path; add a non-payment InProcess
   discovery/recognition shim + `callSale` sale-config + standard events.
 - **Track B reference (read-only, for harvest):**
   `origin/in_process:src/in_process/minters/TortoiseMinter.sol` and siblings; deployed
   Sepolia addresses in `origin/ziad-testing:addresses/84532.json`.
-- **Next deliverable (not yet written):** a phase-by-phase implementation plan for
-  `TortoiseInProcessMinter` (ETH) + the ETH-native `TortoiseShell` rewrite, plus the
-  harvested shim/limiter/scaffolding from §8. The codex plan's Phases 1–5 (plan lines
-  ~634–681) are the starting skeleton.
-- **Blocking external dependency:** the InProcess-team confirmations listed in §8
-  (indexer behavior for `adminMint`, Sepolia factory address, zero protocol fee).
-- **Where this doc lives in-repo:** committed on branch
-  `claude/tortoise-contracts-v1-review-CzB1p` (see commit for path).
+- **Next deliverable:** execute Phase 1 of `planning/eth-minter-implementation-plan.md`
+  — the `TortoiseInProcessMinter` skeleton + ETH-native `TortoiseShell` rewrite — held to
+  v1's fuzz/invariant/fork test bar.
+- **Blocking external dependency:** the InProcess-team confirmations listed in §8 and in
+  the plan's "In Process Team Dependency" section (indexer behavior for `adminMint`,
+  Sepolia factory address, zero protocol fee).
 
 ## Verification / how this was produced (read-only)
 - Branch/PR map: `git for-each-ref`, `git merge-base`, GitHub `list_pull_requests`.
