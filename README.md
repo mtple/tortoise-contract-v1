@@ -143,6 +143,9 @@ Before a mainnet deployment:
 
 - Complete an independent audit of `Tortoise` and the active `TortoiseShell`.
 - Resolve all high/medium findings and rerun the full unit, fuzz, invariant and fork suites.
+- Resolve or explicitly accept every open item in
+  [`planning/security-design-considerations.md`](planning/security-design-considerations.md),
+  including the active reward-period rollover policy.
 - Recheck runtime size against EIP-170 after audit changes.
 - Verify client/indexer handling of `artistAttested`.
 - Perform and document a Base Sepolia deployment rehearsal.

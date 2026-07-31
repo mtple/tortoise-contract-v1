@@ -411,6 +411,9 @@ contract TortoiseShell is ITortoiseShell, Ownable2Step, ReentrancyGuardTransient
         if (block.timestamp >= periodFinish) {
             rewardRate = pooled / rewardDuration;
         } else {
+            // TODO(SEC-DC-001): Before mainnet, explicitly accept or change the rolling-emissions
+            // policy documented in planning/security-design-considerations.md. A public
+            // collection can fund this path and restart the full duration for the unpaid balance.
             uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
             rewardRate = (pooled + leftover) / rewardDuration;
